@@ -1,126 +1,234 @@
-VSRP Sandbox Environment – 3‑Tier AWS App
-=========================================
+# vsrp-sandbox-env: 2-Tier Private Containerized App
 
-## 1. Purpose
+**Status:** Draft
+**VPC:** vsrp-sandbox-dev (10.3.0.0/24)
+**Subnets:** /27 per subnet (27 usable IPs each)
+**Repo:** `02_gh/vsrp_sandbox_env`
+**Region:** us-east-1 (us-east-1a, us-east-1b)
 
-This repository defines a **sandbox AWS environment** used to prototype and validate **VSRP CI/CD pipelines** against a realistic, production‑like **3‑tier web application**.  
-All infrastructure will be managed with **Terraform** and deployed via **Terraform Cloud + GitHub Actions**, with AWS as the target platform.
+---
 
-The goals of this sandbox:
+## 1. Design Goals
 
-- Validate that CI/CD pipelines can safely create, update, and destroy a 3‑tier stack
-- Exercise IAM, networking, tagging, and security patterns that will be used in real environments
-- Provide an isolated playground to iterate on Terraform modules and workflows
+- **Private only** — No public subnets; access via AWS VPN through TGW or SSM bastion
+- **Containerized** — ECS Fargate (no EC2 node management)
+- **2-tier architecture** — Web (ALB) → App (Fargate); no database tier initially
+- **Cost-conscious** — No NAT in spoke (hub provides); minimal Fargate sizing for sandbox
+- **Learning-focused** — End-to-end exposure to ECS, ECR, CI/CD, and Terraform workflows
 
-## 2. High‑Level Architecture
+---
 
-At a high level, the app follows a classic **presentation / application / data** pattern inside a single AWS account and VPC:
+## 2. Architecture
 
-```text
-Internet
-   |
-   v
-Route 53 (optional) + ACM
-   |
-   v
-Application Load Balancer (public subnets)
-   |
-   v
-ECS Fargate Service (app containers in private subnets)
-   |
-   v
-Amazon RDS (PostgreSQL) in isolated data subnets
+The architecture is a 2-tier design: an internal Application Load Balancer fronting ECS Fargate tasks running a static nginx container. All traffic is private, routed through the Transit Gateway from on-prem or AWS VPN.
+
+```
+[ On-prem 10.14.0.0/16 ] --VPN/TGW--> [ Spoke VPC 10.3.0.0/24 ]
+                                              |
+                                              v
+                                  [ Internal ALB ] :80
+                                              |
+                                              v
+                                  [ ECS Fargate Tasks ]
 ```
 
-### Environments
+### Web Tier (ALB)
 
-For this sandbox, the default assumption is a single **sandbox** environment (e.g., `env = "sandbox"`), with the option to add more later (e.g., `dev`, `staging`, `prod`) using the same patterns.
+- Scheme: internal (no public-facing endpoint)
+- Subnets: app us-east-1a, app us-east-1b
+- Listener: HTTP port 80 (HTTPS/443 optional later when domain and ACM cert are ready)
+- DNS: default ALB hostname (*.elb.amazonaws.com); custom Route 53 record added later if needed
 
-## 3. Networking & Security
+### App Tier (ECS Fargate)
 
-- **VPC**
-  - One dedicated VPC for the sandbox environment (no default VPC usage)
-  - CIDR sized to allow future expansion (e.g., `/16` or `/20` depending on org standards)
+- Cluster: vsrp-sandbox-env
+- Service: 1 ECS service running nginx (static web page + health endpoint)
+- Task sizing: 0.25 vCPU / 0.5 GB (Fargate minimum; sufficient for static content)
+- Desired count: 1 (no autoscaling for sandbox)
+- Subnets: app us-east-1a, app us-east-1b
+- Images: stored in Amazon ECR; pulled by Fargate over TGW → hub NAT
+- Outbound: TGW → hub NAT Gateway (for ECR, CloudWatch, S3 endpoints)
 
-- **Subnets (per AZ)**
-  - **Public subnets**:  
-    - Contain only the **Application Load Balancer** and **NAT Gateways**
-  - **Private app subnets**:  
-    - Run the **ECS Fargate tasks** (application containers)
-    - Outbound internet via NAT gateways only
-  - **Private data subnets**:  
-    - Host the **RDS database**
-    - No direct internet access
+### Data Tier (Future)
 
-- **Security groups**
-  - ALB SG: allows inbound HTTP/HTTPS from the internet, forwards only to app SG
-  - App SG: allows inbound from ALB SG on app ports; outbound to DB SG
-  - DB SG: allows inbound only from app SG on the DB port (e.g., 5432)
-  - No 0.0.0.0/0 ingress to DB or app tiers
+No database tier in the initial deployment. When a database-backed application is needed, add RDS PostgreSQL 15 (db.t4g.micro, single-AZ, 20 GB gp3 encrypted) in the data subnets. Secrets Manager for credential management.
 
-- **Observability & logs**
-  - VPC Flow Logs enabled to CloudWatch Logs or S3
-  - ALB access logs optionally sent to S3
-  - ECS task logs to CloudWatch Logs using a consistent log group naming convention
+---
 
-## 4. Tiers & Components
+## 3. Security Groups
 
-### 4.1 Presentation Tier
+| SG | Inbound | Outbound |
+|--------|----------------------------------------|----------------------------------------|
+| alb-sg | 80 from 10.14.0.0/16 (on-prem) | Target port to app-sg (health checks) |
+| | 80 from TBD (AWS Client VPN CIDR) | |
+| app-sg | 80 from alb-sg | 443 to ECR/CloudWatch/S3 endpoints |
 
-- **Route 53** (optional for sandbox) for DNS records (e.g., `sandbox.vsrp.example.com`)
-- **ACM** certificates for TLS on the ALB
-- **Application Load Balancer**
-  - Listeners (HTTP → redirect to HTTPS, HTTPS → target groups)
-  - Target groups pointing to ECS service tasks
+> **Note:** Replace TBD with the AWS Client VPN endpoint CIDR once confirmed.
+>
+> **Note:** data-sg (port 5432 from app-sg) will be added when the database tier is introduced.
 
-### 4.2 Application Tier
+---
 
-- **ECS Fargate cluster & service**
-  - One or more services running containerized web/API workloads
-  - Deployed into private app subnets across at least two AZs
-  - IAM task roles with least‑privilege access to any required AWS APIs
+## 4. Network & Access
 
-- **Container images**
-  - Built by CI (GitHub Actions) and pushed to **ECR**
-  - Tagged by commit SHA and environment (e.g., `:sandbox-<sha>`)
+### Routing
 
-### 4.3 Data Tier
+- Spoke VPC has 0.0.0.0/0 → TGW route confirmed
+- Hub NAT Gateway provisioned and routing confirmed
+- Fargate outbound (ECR pulls, CloudWatch logs) traverses TGW → hub NAT
 
-- **Amazon RDS (PostgreSQL)** in private data subnets
-  - Encrypted at rest (KMS)
-  - Automated backups, backup window, and maintenance window configured
-  - Parameter group for any environment‑specific DB tuning
-  - Access restricted via DB security group as described above
+### Access Paths
 
-## 5. CI/CD & Terraform Workflow (Planned)
+- **On-prem:** 10.14.0.0/16 → TGW → spoke VPC → internal ALB
+- **AWS Client VPN:** TBD CIDR → TGW → spoke VPC → internal ALB
+- No bastion initially
 
-- **Source control**
-  - This repo (`vsrp_sandbox_env`) contains the **infrastructure code** for the sandbox environment
+### DNS
 
-- **Terraform**
-  - Terraform version pinned (>= 1.5) with AWS provider (>= 5.0)
-  - State managed via **Terraform Cloud** workspaces
-  - Standard patterns:
-    - Every variable has `description` and `type`
-    - Every output has `description`
-    - `for_each` preferred over `count`
-    - Common tags applied: `Environment`, `Project`, `ManagedBy = "terraform"`
+Initial access uses the ALB's default AWS hostname. Custom DNS (e.g., sandbox.internal.company.com) via Route 53 private hosted zone is a future enhancement. VPN DNS resolution should be verified during testing.
 
-- **GitHub Actions**
-  - On PR: run `terraform fmt`, `terraform validate`, and `terraform plan` via Terraform Cloud
-  - On merge to main: run `terraform apply` via Terraform Cloud
-  - Authentication to AWS via **OIDC** (no long‑lived access keys)
+---
 
-- **Sandbox safety**
-  - Resources scoped to the sandbox account and VPC
-  - Clear tagging and naming conventions to distinguish sandbox from other environments
-  - Ability to destroy and recreate the entire stack from Terraform when needed
+## 5. Container Registry (ECR)
 
-## 6. Next Steps
+- Terraform creates the ECR repository (e.g., vsrp-sandbox-env/web)
+- Lifecycle policy: retain last 10 images, expire untagged after 7 days
+- Image URI format: `<account_id>.dkr.ecr.us-east-1.amazonaws.com/vsrp-sandbox-env/web:<tag>`
+- Push: GitHub Actions builds and pushes images on app code changes
+- Pull: ECS Fargate pulls images from ECR via TGW → hub NAT path
 
-1. Define the Terraform project layout in this repo (root modules, environment modules, shared modules if needed).  
-2. Implement the VPC, subnets, and security groups.  
-3. Add ALB + ECS Fargate service and connect to a sample container image.  
-4. Add RDS PostgreSQL and wire in connectivity from the app tier.  
-5. Wire up GitHub Actions + Terraform Cloud to manage plans and applies for this sandbox.
+---
 
+## 6. Repository Structure
+
+Single repo with infrastructure and application code separated by directory. CI/CD pipelines are triggered independently based on path filters.
+
+```
+vsrp_sandbox_env/
+├── environments/dev/
+│   ├── main.tf
+│   ├── variables.tf
+│   ├── outputs.tf
+│   ├── security_groups.tf
+│   ├── alb.tf
+│   ├── ecs.tf
+│   ├── ecr.tf
+│   ├── cloudwatch.tf
+│   └── deployments/vsrp_sandbox_dev.tfvars
+├── app/
+│   ├── Dockerfile
+│   ├── nginx.conf
+│   └── html/
+│       └── index.html
+├── .github/workflows/
+│   ├── terraform.yml
+│   └── app-deploy.yml
+└── README.md
+```
+
+---
+
+## 7. CI/CD Pipelines
+
+Two independent pipelines in one repo, separated by path-based triggers.
+
+### Infrastructure Pipeline (Terraform Cloud)
+
+- Trigger: changes to `environments/**` merged to main
+- GitHub Actions runs `terraform fmt -check` and `terraform validate` as PR quality gate
+- TFC picks up changes via VCS-driven runs and executes plan/apply
+- TFC manages state; GitHub Actions never runs plan or apply
+- Auth: TFC → AWS via OIDC (tfc_aws_dynamic_credentials)
+
+### Application Pipeline (GitHub Actions)
+
+- Trigger: changes to `app/**` merged to main
+- Steps: checkout → configure AWS creds (OIDC) → login to ECR → build Docker image → push to ECR → update ECS service
+- Auth: GitHub Actions → AWS via OIDC (separate IAM role with ECR + ECS deploy permissions only)
+- First deploy: infrastructure must exist before first image push
+
+### IAM Roles
+
+| Pipeline | Auth Method | Permissions |
+|-----------------|--------------------------------------|--------------------------------------------------------|
+| Terraform Cloud | OIDC (tfc_aws_dynamic_credentials) | Broad infra provisioning (VPC, ALB, ECS, ECR, IAM, CloudWatch) |
+| GitHub Actions | OIDC (GitHub → AWS federation) | ECR push, ECS UpdateService, CloudWatch Logs read |
+
+---
+
+## 8. TFC Workspace Configuration
+
+| Setting | Value |
+|---------------------|---------------------------------------------------------------|
+| Workspace Name | vsrp-sandbox-env-dev |
+| Working Directory | environments/dev |
+| VCS Trigger Paths | environments/dev/** |
+| Tags | vsrp-sandbox-env, dev |
+| Env Vars | TF_CLI_ARGS_plan = -var-file=deployments/vsrp_sandbox_dev.tfvars |
+| Credentials | tfc_aws_dynamic_credentials (OIDC) |
+| VPC/Subnet Data | terraform_remote_state from network-hub workspace |
+
+---
+
+## 9. Observability
+
+### Logging
+
+- CloudWatch Log Group for ECS Fargate container logs
+- Retention: 7 days (sandbox)
+- Provisioned via Terraform
+
+### Monitoring & Alarms
+
+- ALB target group unhealthy host count alarm
+- ECS service running task count alarm (alert if 0)
+- All alarms defined in Terraform (cloudwatch.tf)
+
+---
+
+## 10. Tagging Strategy
+
+Default tags applied via the AWS provider block in Terraform:
+
+| Tag Key | Value |
+|-------------|------------------------|
+| Project | vsrp-sandbox-env |
+| Environment | dev |
+| Owner | \<team or individual\> |
+| ManagedBy | terraform |
+
+---
+
+## 11. Decisions Log
+
+| # | Decision | Choice | Rationale |
+|-----|------------------------|-------------------------------|--------------------------------------|
+| 1 | Architecture tiers | 2-tier (ALB → Fargate) | No DB needed for static app; add later |
+| 2 | ECS services | 1 service (nginx) | Sandbox simplicity |
+| 3 | Fargate sizing | 0.25 vCPU / 0.5 GB | Minimum; sufficient for static content |
+| 4 | Autoscaling | None (desired_count=1) | Sandbox; no scaling needed |
+| 5 | Placeholder app | nginx + health endpoint | Prove design end-to-end |
+| 6 | ALB CIDRs | 10.14.0.0/16 (on-prem) + TBD (Client VPN) | Two access paths, separate SG rules |
+| 7 | Bastion | No | Access via on-prem and Client VPN |
+| 8 | HTTPS | HTTP (80) first | 443 when domain/cert ready |
+| 9 | Container registry | Amazon ECR | Native AWS; private network pull |
+| 10 | Infra pipeline | Terraform Cloud (VCS-driven) | Already set up with OIDC |
+| 11 | App pipeline | GitHub Actions | Build/push images, deploy to ECS |
+| 12 | Auth (both pipelines) | OIDC (separate IAM roles) | No static keys; least privilege |
+| 13 | Log retention | 7 days | Sandbox; minimal cost |
+| 14 | Database | Deferred | Add RDS PostgreSQL when app needs it |
+
+---
+
+## 12. Next Steps
+
+1. Confirm decisions in this document
+2. Create GitHub Actions OIDC IAM role for ECR/ECS deploy permissions
+3. Implement Terraform code (ALB, ECS, ECR, CloudWatch, security groups)
+4. Create TFC workspace with VCS trigger paths scoped to `environments/dev/**`
+5. Build placeholder nginx app (Dockerfile, nginx.conf, index.html)
+6. Set up GitHub Actions app-deploy workflow (build, push ECR, deploy ECS)
+7. Run terraform apply to provision infrastructure
+8. Push first container image and verify ECS deployment
+9. Test end-to-end: VPN → ALB hostname → nginx page
+10. Verify DNS resolution over VPN (troubleshoot if ALB hostname doesn't resolve)
