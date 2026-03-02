@@ -42,11 +42,11 @@ The architecture is a 2-tier design: an internal Application Load Balancer front
 ### App Tier (ECS Fargate)
 
 - Cluster: vsrp-sandbox-env
-- Service: 1 ECS service running nginx (static web page + health endpoint)
+- Service: 1 ECS service running custom nginx image (static web page + health endpoint)
 - Task sizing: 0.25 vCPU / 0.5 GB (Fargate minimum; sufficient for static content)
-- Desired count: 1 (no autoscaling for sandbox)
+- Desired count: 0 initially (Terraform); first app-deploy sets to 1 — custom image from day 1 for end-to-end learning
 - Subnets: app us-east-1a, app us-east-1b
-- Images: stored in Amazon ECR; pulled by Fargate over TGW → hub NAT
+- Images: stored in Amazon ECR; custom image built and pushed by GitHub Actions app-deploy
 - Outbound: TGW → hub NAT Gateway (for ECR, CloudWatch, S3 endpoints)
 
 ### Data Tier (Future)
@@ -143,9 +143,9 @@ Two independent pipelines in one repo, separated by path-based triggers.
 ### Application Pipeline (GitHub Actions)
 
 - Trigger: changes to `app/**` merged to main
-- Steps: checkout → configure AWS creds (OIDC) → login to ECR → build Docker image → push to ECR → update ECS service
+- Steps: checkout → configure AWS creds (OIDC) → login to ECR → build Docker image → push to ECR → update ECS service (desired_count=1, force new deployment)
 - Auth: GitHub Actions → AWS via OIDC (separate IAM role with ECR + ECS deploy permissions only)
-- First deploy: infrastructure must exist before first image push
+- First deploy: Terraform provisions infra with ECS desired_count=0. First app-deploy pushes custom image to ECR and sets desired_count=1 — full end-to-end from source to running container
 
 ### IAM Roles
 
@@ -164,7 +164,7 @@ Two independent pipelines in one repo, separated by path-based triggers.
 | Working Directory | environments/dev |
 | VCS Trigger Paths | environments/dev/** |
 | Tags | vsrp-sandbox-env, dev |
-| Env Vars | TF_CLI_ARGS_plan = -var-file=deployments/vsrp_sandbox_dev.tfvars |
+| Env Vars | TF_CLI_ARGS_plan, TF_CLI_ARGS_apply = -var-file=deployments/vsrp_sandbox_dev.tfvars |
 | Credentials | tfc_aws_dynamic_credentials (OIDC) |
 | VPC/Subnet Data | terraform_remote_state from network-hub workspace |
 
@@ -206,7 +206,7 @@ Default tags applied via the AWS provider block in Terraform:
 | 1 | Architecture tiers | 2-tier (ALB → Fargate) | No DB needed for static app; add later |
 | 2 | ECS services | 1 service (nginx) | Sandbox simplicity |
 | 3 | Fargate sizing | 0.25 vCPU / 0.5 GB | Minimum; sufficient for static content |
-| 4 | Autoscaling | None (desired_count=1) | Sandbox; no scaling needed |
+| 4 | Autoscaling | None (desired_count=1 after first app-deploy) | Sandbox; no scaling needed |
 | 5 | Placeholder app | nginx + health endpoint | Prove design end-to-end |
 | 6 | ALB CIDRs | 10.14.0.0/16 (on-prem) + TBD (Client VPN) | Two access paths, separate SG rules |
 | 7 | Bastion | No | Access via on-prem and Client VPN |
@@ -217,18 +217,42 @@ Default tags applied via the AWS provider block in Terraform:
 | 12 | Auth (both pipelines) | OIDC (separate IAM roles) | No static keys; least privilege |
 | 13 | Log retention | 7 days | Sandbox; minimal cost |
 | 14 | Database | Deferred | Add RDS PostgreSQL when app needs it |
+| 15 | Bootstrap image | Custom image from day 1 | desired_count=0 in Terraform; first app-deploy pushes image and sets desired_count=1 for end-to-end learning |
 
 ---
 
-## 12. Next Steps
+## 12. Initial Deployment Flow
+
+Custom image approach — no public/placeholder image. Terraform provisions infrastructure; first app-deploy bootstraps the running service.
+
+```
+Step 1: terraform apply (TFC)
+        └── Creates: ECR repo, ECS cluster, task definition, ALB, service (desired_count=0)
+        └── Result: ALB exists, no targets; ECS service exists but no tasks running
+
+Step 2: First app-deploy (GitHub Actions)
+        └── Builds Docker image from app/
+        └── Pushes to ECR
+        └── Updates ECS service: desired_count=1, force new deployment
+        └── Result: Fargate pulls image, starts task, ALB gets healthy target
+
+Step 3: Verify
+        └── VPN → ALB hostname → custom nginx page
+```
+
+**Order:** Infrastructure first, then app. No chicken-and-egg — Terraform does not need an image to exist; the task definition references the ECR URI. ECS only attempts the pull when desired_count becomes 1.
+
+---
+
+## 13. Next Steps
 
 1. Confirm decisions in this document
 2. Create GitHub Actions OIDC IAM role for ECR/ECS deploy permissions
-3. Implement Terraform code (ALB, ECS, ECR, CloudWatch, security groups)
+3. Implement Terraform code (ALB, ECS with desired_count=0, ECR, CloudWatch, security groups)
 4. Create TFC workspace with VCS trigger paths scoped to `environments/dev/**`
 5. Build placeholder nginx app (Dockerfile, nginx.conf, index.html)
-6. Set up GitHub Actions app-deploy workflow (build, push ECR, deploy ECS)
+6. Set up GitHub Actions app-deploy workflow (build, push ECR, update ECS desired_count=1)
 7. Run terraform apply to provision infrastructure
-8. Push first container image and verify ECS deployment
-9. Test end-to-end: VPN → ALB hostname → nginx page
+8. Merge app changes to trigger first app-deploy; verify ECS tasks start and ALB is healthy
+9. Test end-to-end: VPN → ALB hostname → custom nginx page
 10. Verify DNS resolution over VPN (troubleshoot if ALB hostname doesn't resolve)
