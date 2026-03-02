@@ -256,3 +256,5 @@ Step 3: Verify
 8. Merge app changes to trigger first app-deploy; verify ECS tasks start and ALB is healthy
 9. Test end-to-end: VPN → ALB hostname → custom nginx page
 10. Verify DNS resolution over VPN (troubleshoot if ALB hostname doesn't resolve)
+
+test
