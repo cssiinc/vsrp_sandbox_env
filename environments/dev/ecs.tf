@@ -41,7 +41,7 @@ data "aws_iam_policy_document" "ecs_task_execution_secrets" {
       "secretsmanager:GetSecretValue"
     ]
     resources = [
-      module.rds.db_instance_master_user_secret[0].secret_arn
+      module.rds.db_instance_master_user_secret_arn
     ]
   }
 }
@@ -177,7 +177,7 @@ module "ecs" {
           }]
           secrets = [{
             name      = "DB_SECRET_ARN"
-            valueFrom = module.rds.db_instance_master_user_secret[0].secret_arn
+            valueFrom = module.rds.db_instance_master_user_secret_arn
           }]
           log_configuration = {
             logDriver = "awslogs"

@@ -37,5 +37,5 @@ output "rds_endpoint" {
 
 output "db_secret_arn" {
   description = "Secrets Manager ARN for DB credentials (injected into backend container)"
-  value       = try(module.rds.db_instance_master_user_secret[0].secret_arn, null)
+  value       = module.rds.db_instance_master_user_secret_arn
 }
