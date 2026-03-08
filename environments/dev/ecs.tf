@@ -70,10 +70,6 @@ module "ecs" {
     }
   }
 
-  # Task execution IAM (we create our own for Secrets Manager access)
-  create_task_exec_iam_role = false
-  task_exec_iam_role_arn    = aws_iam_role.ecs_task_execution.arn
-
   # No cluster-level security group; services use app_sg
   create_security_group = false
 
@@ -82,6 +78,10 @@ module "ecs" {
     frontend = {
       cpu    = 256 # 0.25 vCPU
       memory = 512 # 0.5 GB
+
+      # Use our custom task execution role (has Secrets Manager access)
+      create_task_exec_iam_role = false
+      task_exec_iam_role_arn    = aws_iam_role.ecs_task_execution.arn
 
       desired_count = 0
 
@@ -128,6 +128,10 @@ module "ecs" {
     backend = {
       cpu    = 256
       memory = 512
+
+      # Use our custom task execution role (has Secrets Manager access)
+      create_task_exec_iam_role = false
+      task_exec_iam_role_arn    = aws_iam_role.ecs_task_execution.arn
 
       desired_count = 0
 
