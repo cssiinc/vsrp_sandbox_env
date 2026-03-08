@@ -33,7 +33,7 @@ resource "aws_iam_openid_connect_provider" "github" {
 }
 
 locals {
-  github_oidc_arn = coalesce(var.github_oidc_provider_arn, try(aws_iam_openid_connect_provider.github[0].arn, ""))
+  github_oidc_arn = var.github_oidc_provider_arn != "" ? var.github_oidc_provider_arn : try(aws_iam_openid_connect_provider.github[0].arn, "")
 }
 
 # IAM role for GitHub Actions
