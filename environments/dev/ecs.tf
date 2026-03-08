@@ -108,13 +108,13 @@ module "ecs" {
         frontend = {
           essential = true
           image     = "${module.ecr["frontend"].repository_url}:latest"
-          port_mappings = [{
+          portMappings = [{
             name          = "frontend"
             containerPort = 80
             hostPort      = 80
             protocol      = "tcp"
           }]
-          log_configuration = {
+          logConfiguration = {
             logDriver = "awslogs"
             options = {
               "awslogs-group"         = aws_cloudwatch_log_group.frontend.name
@@ -159,7 +159,7 @@ module "ecs" {
           essential = false
           image     = "${module.ecr["backend"].repository_url}:latest"
           command   = ["node", "run-migration.js"]
-          log_configuration = {
+          logConfiguration = {
             logDriver = "awslogs"
             options = {
               "awslogs-group"         = aws_cloudwatch_log_group.backend_init.name
@@ -171,7 +171,7 @@ module "ecs" {
         backend = {
           essential = true
           image     = "${module.ecr["backend"].repository_url}:latest"
-          port_mappings = [{
+          portMappings = [{
             name          = "backend"
             containerPort = 3000
             hostPort      = 3000
@@ -181,7 +181,7 @@ module "ecs" {
             name      = "DB_SECRET_ARN"
             valueFrom = module.rds.db_instance_master_user_secret_arn
           }]
-          log_configuration = {
+          logConfiguration = {
             logDriver = "awslogs"
             options = {
               "awslogs-group"         = aws_cloudwatch_log_group.backend.name
@@ -189,7 +189,7 @@ module "ecs" {
               "awslogs-stream-prefix" = "ecs"
             }
           }
-          depends_on = [{
+          dependsOn = [{
             containerName = "backend-init"
             condition     = "SUCCESS"
           }]
