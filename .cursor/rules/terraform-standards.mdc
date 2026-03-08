@@ -1,0 +1,31 @@
+---
+description: Terraform standards for vsrp_sandbox_env — comments and registry modules
+globs: "**/*.tf"
+alwaysApply: false
+---
+
+# Terraform Standards — vsrp_sandbox_env
+
+## 1. Comments
+
+- Add explanatory comments to all Terraform code.
+- Use block-level comments (`#` or `/* */`) to describe *what* each resource/module does and *why* (e.g., security, cost, architecture).
+- Document non-obvious values, constraints, or dependencies.
+- Keep comments concise; avoid stating the obvious.
+
+## 2. Terraform Registry Modules
+
+- Prefer Terraform Registry modules (especially `terraform-aws-modules/*`) over raw resources.
+- Use modules to get full configurations upfront (encryption, lifecycle, monitoring, etc.) and avoid adding configs later.
+- Pin module versions in the `source` (e.g., `terraform-aws-modules/ecr/aws` with `version = "~> 3.0"` in `required_providers` or `source`).
+- When using a module, pass all relevant variables to configure it fully rather than accepting defaults blindly.
+
+## 3. Module Choices (Reference)
+
+| Resource        | Module                               |
+|----------------|--------------------------------------|
+| ECR            | terraform-aws-modules/ecr/aws        |
+| ALB            | terraform-aws-modules/alb/aws        |
+| ECS            | terraform-aws-modules/ecs/aws        |
+| RDS            | terraform-aws-modules/rds/aws        |
+| Security Group | terraform-aws-modules/security-group/aws |

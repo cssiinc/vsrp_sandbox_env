@@ -1,0 +1,15 @@
+{
+  "name": "vsrp-sandbox-backend",
+  "version": "1.0.0",
+  "description": "API proxy for public APIs; writes events to RDS",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "migrate": "node run-migration.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "pg": "^8.11.3",
+    "@aws-sdk/client-secrets-manager": "^3.450.0"
+  }
+}

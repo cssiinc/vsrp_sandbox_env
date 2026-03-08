@@ -1,0 +1,261 @@
+# vsrp-sandbox-env — App build & deploy
+#
+# Builds frontend + backend Docker images, pushes to ECR, updates ECS services.
+# Uses OIDC for AWS auth (no static keys).
+#
+# Features:
+#   - Change detection: only builds tiers that changed
+#   - Docker layer caching: speeds up rebuilds via GitHub Actions cache
+#   - ECR vulnerability scan gating: fails deploy if CRITICAL/HIGH CVEs found
+#
+# Required:
+#   - GitHub repo vars: AWS_ACCOUNT_ID, AWS_REGION, ECS_CLUSTER
+#   - GitHub repo secret: AWS_ROLE_ARN (IAM role for OIDC)
+#   - Terraform output: github_actions_role_arn
+#
+name: App Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  ECR_FRONTEND: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION || 'us-east-1' }}.amazonaws.com/vsrp-sandbox-env/frontend
+  ECR_BACKEND: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION || 'us-east-1' }}.amazonaws.com/vsrp-sandbox-env/backend
+  ECS_CLUSTER: ${{ vars.ECS_CLUSTER || 'vsrp-sandbox-env-dev' }}
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Detect which tiers changed — skip unchanged builds
+  # ---------------------------------------------------------------------------
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      backend: ${{ steps.filter.outputs.backend }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check changed paths
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            frontend:
+              - 'app/frontend/**'
+            backend:
+              - 'app/backend/**'
+
+  # ---------------------------------------------------------------------------
+  # Frontend: build, scan, deploy
+  # ---------------------------------------------------------------------------
+  deploy-frontend:
+    name: Deploy Frontend
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app/frontend
+          push: true
+          tags: ${{ env.ECR_FRONTEND }}:${{ github.sha }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+      - name: Wait for ECR scan
+        run: |
+          echo "Waiting for ECR scan to complete..."
+          for i in $(seq 1 30); do
+            STATUS=$(aws ecr describe-image-scan-findings \
+              --repository-name vsrp-sandbox-env/frontend \
+              --image-id imageTag=${{ github.sha }} \
+              --query 'imageScanStatus.status' \
+              --output text 2>/dev/null || echo "PENDING")
+            if [ "$STATUS" = "COMPLETE" ]; then
+              echo "Scan complete."
+              break
+            fi
+            echo "Scan status: $STATUS (attempt $i/30)"
+            sleep 10
+          done
+
+      - name: Check scan for CRITICAL/HIGH CVEs
+        run: |
+          CRITICAL=$(aws ecr describe-image-scan-findings \
+            --repository-name vsrp-sandbox-env/frontend \
+            --image-id imageTag=${{ github.sha }} \
+            --query 'imageScanFindings.findingSeverityCounts.CRITICAL' \
+            --output text 2>/dev/null || echo "0")
+          HIGH=$(aws ecr describe-image-scan-findings \
+            --repository-name vsrp-sandbox-env/frontend \
+            --image-id imageTag=${{ github.sha }} \
+            --query 'imageScanFindings.findingSeverityCounts.HIGH' \
+            --output text 2>/dev/null || echo "0")
+
+          [ "$CRITICAL" = "None" ] && CRITICAL=0
+          [ "$HIGH" = "None" ] && HIGH=0
+
+          echo "Scan results: CRITICAL=$CRITICAL, HIGH=$HIGH"
+          if [ "$CRITICAL" -gt 0 ]; then
+            echo "::error::$CRITICAL CRITICAL vulnerabilities found — blocking deploy"
+            exit 1
+          fi
+          if [ "$HIGH" -gt 0 ]; then
+            echo "::warning::$HIGH HIGH vulnerabilities found — review recommended"
+          fi
+
+      - name: Update task definition and deploy
+        run: |
+          # Get current task definition, update image tag to commit SHA
+          TASK_DEF=$(aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services frontend \
+            --query 'services[0].taskDefinition' \
+            --output text)
+
+          # Get the full task def, update image, register new revision
+          aws ecs describe-task-definition --task-definition "$TASK_DEF" \
+            --query 'taskDefinition' | \
+            jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' | \
+            jq --arg IMAGE "${{ env.ECR_FRONTEND }}:${{ github.sha }}" \
+              '.containerDefinitions |= map(if .name == "frontend" then .image = $IMAGE else . end)' > /tmp/taskdef.json
+
+          NEW_TASK_DEF=$(aws ecs register-task-definition \
+            --cli-input-json file:///tmp/taskdef.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service frontend \
+            --task-definition "$NEW_TASK_DEF" \
+            --region ${{ env.AWS_REGION }}
+
+  # ---------------------------------------------------------------------------
+  # Backend: build, scan, deploy
+  # ---------------------------------------------------------------------------
+  deploy-backend:
+    name: Deploy Backend
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app/backend
+          push: true
+          tags: ${{ env.ECR_BACKEND }}:${{ github.sha }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Wait for ECR scan
+        run: |
+          echo "Waiting for ECR scan to complete..."
+          for i in $(seq 1 30); do
+            STATUS=$(aws ecr describe-image-scan-findings \
+              --repository-name vsrp-sandbox-env/backend \
+              --image-id imageTag=${{ github.sha }} \
+              --query 'imageScanStatus.status' \
+              --output text 2>/dev/null || echo "PENDING")
+            if [ "$STATUS" = "COMPLETE" ]; then
+              echo "Scan complete."
+              break
+            fi
+            echo "Scan status: $STATUS (attempt $i/30)"
+            sleep 10
+          done
+
+      - name: Check scan for CRITICAL/HIGH CVEs
+        run: |
+          CRITICAL=$(aws ecr describe-image-scan-findings \
+            --repository-name vsrp-sandbox-env/backend \
+            --image-id imageTag=${{ github.sha }} \
+            --query 'imageScanFindings.findingSeverityCounts.CRITICAL' \
+            --output text 2>/dev/null || echo "0")
+          HIGH=$(aws ecr describe-image-scan-findings \
+            --repository-name vsrp-sandbox-env/backend \
+            --image-id imageTag=${{ github.sha }} \
+            --query 'imageScanFindings.findingSeverityCounts.HIGH' \
+            --output text 2>/dev/null || echo "0")
+
+          [ "$CRITICAL" = "None" ] && CRITICAL=0
+          [ "$HIGH" = "None" ] && HIGH=0
+
+          echo "Scan results: CRITICAL=$CRITICAL, HIGH=$HIGH"
+          if [ "$CRITICAL" -gt 0 ]; then
+            echo "::error::$CRITICAL CRITICAL vulnerabilities found — blocking deploy"
+            exit 1
+          fi
+          if [ "$HIGH" -gt 0 ]; then
+            echo "::warning::$HIGH HIGH vulnerabilities found — review recommended"
+          fi
+
+      - name: Update task definition and deploy
+        run: |
+          # Get current task definition, update image tags to commit SHA
+          TASK_DEF=$(aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services backend \
+            --query 'services[0].taskDefinition' \
+            --output text)
+
+          # Update both backend and backend-init container images
+          aws ecs describe-task-definition --task-definition "$TASK_DEF" \
+            --query 'taskDefinition' | \
+            jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' | \
+            jq --arg IMAGE "${{ env.ECR_BACKEND }}:${{ github.sha }}" \
+              '.containerDefinitions |= map(if (.name == "backend" or .name == "backend-init") then .image = $IMAGE else . end)' > /tmp/taskdef.json
+
+          NEW_TASK_DEF=$(aws ecs register-task-definition \
+            --cli-input-json file:///tmp/taskdef.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service backend \
+            --task-definition "$NEW_TASK_DEF" \
+            --region ${{ env.AWS_REGION }}

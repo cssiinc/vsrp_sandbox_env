@@ -1,0 +1,16 @@
+################################################################################
+# vsrp-sandbox-env — DEV
+# Optional overrides. Network (VPC, subnets, SGs) discovered from AWS via data.tf.
+# Set in TFC workspace variables, or use -var-file for local runs.
+################################################################################
+
+# Optional: override VPC lookup (default: vsrp-sandbox-dev)
+# vpc_name = "vsrp-sandbox-dev"
+
+# Required for GitHub Actions OIDC (cicd.tf): creates IAM role for app-deploy workflow
+github_repository = "YOUR_ORG/vsrp_sandbox_env"
+
+# Optional overrides (defaults in variables.tf)
+# aws_region    = "us-east-1"
+# environment   = "dev"
+# project       = "vsrp-sandbox-env"
