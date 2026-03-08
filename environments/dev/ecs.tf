@@ -111,6 +111,7 @@ module "ecs" {
           port_mappings = [{
             name          = "frontend"
             containerPort = 80
+            hostPort      = 80
             protocol      = "tcp"
           }]
           log_configuration = {
@@ -173,6 +174,7 @@ module "ecs" {
           port_mappings = [{
             name          = "backend"
             containerPort = 3000
+            hostPort      = 3000
             protocol      = "tcp"
           }]
           secrets = [{
