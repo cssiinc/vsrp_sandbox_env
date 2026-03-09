@@ -156,6 +156,7 @@ jobs:
             --cluster ${{ env.ECS_CLUSTER }} \
             --service frontend \
             --task-definition "$NEW_TASK_DEF" \
+            --desired-count 1 \
             --region ${{ env.AWS_REGION }}
 
   # ---------------------------------------------------------------------------
@@ -258,4 +259,5 @@ jobs:
             --cluster ${{ env.ECS_CLUSTER }} \
             --service backend \
             --task-definition "$NEW_TASK_DEF" \
+            --desired-count 1 \
             --region ${{ env.AWS_REGION }}
