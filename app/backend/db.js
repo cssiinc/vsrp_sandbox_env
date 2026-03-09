@@ -19,9 +19,9 @@ async function getDbConfig() {
   const secret = JSON.parse(response.SecretString);
 
   return {
-    host: secret.host || process.env.DB_HOST,
-    port: secret.port || 5432,
-    database: secret.dbname || secret.dbName,
+    host: process.env.DB_HOST,
+    port: parseInt(process.env.DB_PORT, 10) || 5432,
+    database: process.env.DB_NAME,
     user: secret.username,
     password: secret.password,
     ssl: { rejectUnauthorized: false },
