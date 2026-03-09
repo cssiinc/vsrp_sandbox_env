@@ -159,6 +159,10 @@ module "ecs" {
           essential = false
           image     = "${module.ecr["backend"].repository_url}:latest"
           command   = ["node", "run-migration.js"]
+          secrets = [{
+            name      = "DB_SECRET_ARN"
+            valueFrom = module.rds.db_instance_master_user_secret_arn
+          }]
           logConfiguration = {
             logDriver = "awslogs"
             options = {
