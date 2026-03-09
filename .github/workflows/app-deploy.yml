@@ -80,12 +80,14 @@ jobs:
       - name: Check if image already exists
         id: check-fe-image
         run: |
-          if aws ecr describe-images \
+          set +e
+          aws ecr describe-images \
             --repository-name vsrp-sandbox-env/frontend \
             --image-ids imageTag=${{ github.sha }} \
-            --region ${{ env.AWS_REGION }} \
-            --query 'imageDetails[0].imageTags' \
-            --output text 2>/dev/null | grep -q "${{ github.sha }}"; then
+            --region ${{ env.AWS_REGION }} > /dev/null 2>&1
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -eq 0 ]; then
             echo "Image tag ${{ github.sha }} already exists — skipping build"
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
@@ -201,12 +203,14 @@ jobs:
       - name: Check if image already exists
         id: check-be-image
         run: |
-          if aws ecr describe-images \
+          set +e
+          aws ecr describe-images \
             --repository-name vsrp-sandbox-env/backend \
             --image-ids imageTag=${{ github.sha }} \
-            --region ${{ env.AWS_REGION }} \
-            --query 'imageDetails[0].imageTags' \
-            --output text 2>/dev/null | grep -q "${{ github.sha }}"; then
+            --region ${{ env.AWS_REGION }} > /dev/null 2>&1
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -eq 0 ]; then
             echo "Image tag ${{ github.sha }} already exists — skipping build"
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
