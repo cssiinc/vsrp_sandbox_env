@@ -24,7 +24,7 @@ async function run() {
     database: secret.dbname || secret.dbName,
     user: secret.username,
     password: secret.password,
-    ssl: { rejectUnauthorized: true },
+    ssl: { rejectUnauthorized: false },
   });
 
   await client.connect();
