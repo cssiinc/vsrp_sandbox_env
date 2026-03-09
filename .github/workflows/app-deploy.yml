@@ -1,26 +1,27 @@
-# vsrp-sandbox-env — App build & deploy
+# vsrp-sandbox-env — App deploy (CD)
 #
-# Builds frontend + backend Docker images, pushes to ECR, updates ECS services.
-# Uses OIDC for AWS auth (no static keys).
+# Deploys frontend + backend ECS services using the latest image for
+# the selected commit SHA. Images must already exist in ECR (built by
+# app-build.yml or a previous deploy).
 #
-# Features:
-#   - Change detection: only builds tiers that changed
-#   - Docker layer caching: speeds up rebuilds via GitHub Actions cache
-#   - ECR vulnerability scan gating: fails deploy if CRITICAL/HIGH CVEs found
+# Manual trigger only (workflow_dispatch) — run AFTER TFC has applied
+# any infrastructure changes.
 #
-# Required:
-#   - GitHub repo vars: AWS_ACCOUNT_ID, AWS_REGION, ECS_CLUSTER
-#   - GitHub repo secret: AWS_ROLE_ARN (IAM role for OIDC)
-#   - Terraform output: github_actions_role_arn
+# If no image exists for the SHA, the build step runs automatically.
 #
 name: App Deploy
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'app/**'
   workflow_dispatch:
+    inputs:
+      deploy_frontend:
+        description: 'Deploy frontend'
+        type: boolean
+        default: true
+      deploy_backend:
+        description: 'Deploy backend'
+        type: boolean
+        default: true
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
@@ -34,35 +35,11 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Detect which tiers changed — skip unchanged builds
-  # ---------------------------------------------------------------------------
-  changes:
-    name: Detect Changes
-    runs-on: ubuntu-latest
-    outputs:
-      frontend: ${{ steps.filter.outputs.frontend }}
-      backend: ${{ steps.filter.outputs.backend }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Check changed paths
-        uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            frontend:
-              - 'app/frontend/**'
-            backend:
-              - 'app/backend/**'
-
-  # ---------------------------------------------------------------------------
-  # Frontend: build, scan, deploy
+  # Frontend: ensure image exists, then deploy
   # ---------------------------------------------------------------------------
   deploy-frontend:
     name: Deploy Frontend
-    needs: changes
-    if: needs.changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch'
+    if: inputs.deploy_frontend
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -77,30 +54,26 @@ jobs:
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Check if image already exists
-        id: check-fe-image
+      - name: Check if image exists
+        id: check-image
         run: |
-          set +e
-          aws ecr describe-images \
+          if aws ecr describe-images \
             --repository-name vsrp-sandbox-env/frontend \
             --image-ids imageTag=${{ github.sha }} \
-            --region ${{ env.AWS_REGION }} > /dev/null 2>&1
-          EXIT_CODE=$?
-          set -e
-          if [ $EXIT_CODE -eq 0 ]; then
-            echo "Image tag ${{ github.sha }} already exists — skipping build"
+            --region ${{ env.AWS_REGION }} > /dev/null 2>&1; then
+            echo "Image ${{ github.sha }} found in ECR"
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Image tag ${{ github.sha }} not found — will build"
+            echo "Image not found — will build"
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Set up Docker Buildx
-        if: steps.check-fe-image.outputs.exists == 'false'
+        if: steps.check-image.outputs.exists == 'false'
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push
-        if: steps.check-fe-image.outputs.exists == 'false'
+      - name: Build and push (fallback)
+        if: steps.check-image.outputs.exists == 'false'
         uses: docker/build-push-action@v6
         with:
           context: ./app/frontend
@@ -109,58 +82,14 @@ jobs:
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
 
-      - name: Wait for ECR scan
-        run: |
-          echo "Waiting for ECR scan to complete..."
-          for i in $(seq 1 30); do
-            STATUS=$(aws ecr describe-image-scan-findings \
-              --repository-name vsrp-sandbox-env/frontend \
-              --image-id imageTag=${{ github.sha }} \
-              --query 'imageScanStatus.status' \
-              --output text 2>/dev/null || echo "PENDING")
-            if [ "$STATUS" = "COMPLETE" ]; then
-              echo "Scan complete."
-              break
-            fi
-            echo "Scan status: $STATUS (attempt $i/30)"
-            sleep 10
-          done
-
-      - name: Check scan for CRITICAL/HIGH CVEs
-        run: |
-          CRITICAL=$(aws ecr describe-image-scan-findings \
-            --repository-name vsrp-sandbox-env/frontend \
-            --image-id imageTag=${{ github.sha }} \
-            --query 'imageScanFindings.findingSeverityCounts.CRITICAL' \
-            --output text 2>/dev/null || echo "0")
-          HIGH=$(aws ecr describe-image-scan-findings \
-            --repository-name vsrp-sandbox-env/frontend \
-            --image-id imageTag=${{ github.sha }} \
-            --query 'imageScanFindings.findingSeverityCounts.HIGH' \
-            --output text 2>/dev/null || echo "0")
-
-          [ "$CRITICAL" = "None" ] && CRITICAL=0
-          [ "$HIGH" = "None" ] && HIGH=0
-
-          echo "Scan results: CRITICAL=$CRITICAL, HIGH=$HIGH"
-          if [ "$CRITICAL" -gt 0 ]; then
-            echo "::error::$CRITICAL CRITICAL vulnerabilities found — blocking deploy"
-            exit 1
-          fi
-          if [ "$HIGH" -gt 0 ]; then
-            echo "::warning::$HIGH HIGH vulnerabilities found — review recommended"
-          fi
-
       - name: Update task definition and deploy
         run: |
-          # Get current task definition, update image tag to commit SHA
           TASK_DEF=$(aws ecs describe-services \
             --cluster ${{ env.ECS_CLUSTER }} \
             --services frontend \
             --query 'services[0].taskDefinition' \
             --output text)
 
-          # Get the full task def, update image, register new revision
           aws ecs describe-task-definition --task-definition "$TASK_DEF" \
             --query 'taskDefinition' | \
             jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' | \
@@ -179,13 +108,14 @@ jobs:
             --desired-count 1 \
             --region ${{ env.AWS_REGION }}
 
+          echo "Deployed frontend with image: ${{ env.ECR_FRONTEND }}:${{ github.sha }}"
+
   # ---------------------------------------------------------------------------
-  # Backend: build, scan, deploy
+  # Backend: ensure image exists, then deploy
   # ---------------------------------------------------------------------------
   deploy-backend:
     name: Deploy Backend
-    needs: changes
-    if: needs.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch'
+    if: inputs.deploy_backend
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -200,30 +130,26 @@ jobs:
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Check if image already exists
-        id: check-be-image
+      - name: Check if image exists
+        id: check-image
         run: |
-          set +e
-          aws ecr describe-images \
+          if aws ecr describe-images \
             --repository-name vsrp-sandbox-env/backend \
             --image-ids imageTag=${{ github.sha }} \
-            --region ${{ env.AWS_REGION }} > /dev/null 2>&1
-          EXIT_CODE=$?
-          set -e
-          if [ $EXIT_CODE -eq 0 ]; then
-            echo "Image tag ${{ github.sha }} already exists — skipping build"
+            --region ${{ env.AWS_REGION }} > /dev/null 2>&1; then
+            echo "Image ${{ github.sha }} found in ECR"
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Image tag ${{ github.sha }} not found — will build"
+            echo "Image not found — will build"
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Set up Docker Buildx
-        if: steps.check-be-image.outputs.exists == 'false'
+        if: steps.check-image.outputs.exists == 'false'
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push
-        if: steps.check-be-image.outputs.exists == 'false'
+      - name: Build and push (fallback)
+        if: steps.check-image.outputs.exists == 'false'
         uses: docker/build-push-action@v6
         with:
           context: ./app/backend
@@ -232,58 +158,14 @@ jobs:
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
 
-      - name: Wait for ECR scan
-        run: |
-          echo "Waiting for ECR scan to complete..."
-          for i in $(seq 1 30); do
-            STATUS=$(aws ecr describe-image-scan-findings \
-              --repository-name vsrp-sandbox-env/backend \
-              --image-id imageTag=${{ github.sha }} \
-              --query 'imageScanStatus.status' \
-              --output text 2>/dev/null || echo "PENDING")
-            if [ "$STATUS" = "COMPLETE" ]; then
-              echo "Scan complete."
-              break
-            fi
-            echo "Scan status: $STATUS (attempt $i/30)"
-            sleep 10
-          done
-
-      - name: Check scan for CRITICAL/HIGH CVEs
-        run: |
-          CRITICAL=$(aws ecr describe-image-scan-findings \
-            --repository-name vsrp-sandbox-env/backend \
-            --image-id imageTag=${{ github.sha }} \
-            --query 'imageScanFindings.findingSeverityCounts.CRITICAL' \
-            --output text 2>/dev/null || echo "0")
-          HIGH=$(aws ecr describe-image-scan-findings \
-            --repository-name vsrp-sandbox-env/backend \
-            --image-id imageTag=${{ github.sha }} \
-            --query 'imageScanFindings.findingSeverityCounts.HIGH' \
-            --output text 2>/dev/null || echo "0")
-
-          [ "$CRITICAL" = "None" ] && CRITICAL=0
-          [ "$HIGH" = "None" ] && HIGH=0
-
-          echo "Scan results: CRITICAL=$CRITICAL, HIGH=$HIGH"
-          if [ "$CRITICAL" -gt 0 ]; then
-            echo "::error::$CRITICAL CRITICAL vulnerabilities found — blocking deploy"
-            exit 1
-          fi
-          if [ "$HIGH" -gt 0 ]; then
-            echo "::warning::$HIGH HIGH vulnerabilities found — review recommended"
-          fi
-
       - name: Update task definition and deploy
         run: |
-          # Get current task definition, update image tags to commit SHA
           TASK_DEF=$(aws ecs describe-services \
             --cluster ${{ env.ECS_CLUSTER }} \
             --services backend \
             --query 'services[0].taskDefinition' \
             --output text)
 
-          # Update both backend and backend-init container images
           aws ecs describe-task-definition --task-definition "$TASK_DEF" \
             --query 'taskDefinition' | \
             jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' | \
@@ -301,3 +183,5 @@ jobs:
             --task-definition "$NEW_TASK_DEF" \
             --desired-count 1 \
             --region ${{ env.AWS_REGION }}
+
+          echo "Deployed backend with image: ${{ env.ECR_BACKEND }}:${{ github.sha }}"
