@@ -79,6 +79,10 @@ module "ecs" {
       cpu    = 256 # 0.25 vCPU
       memory = 512 # 0.5 GB
 
+      # Workflow manages image tags via task def revisions; prevent TFC
+      # from resetting the service back to :latest on every apply.
+      ignore_task_definition_changes = true
+
       # Use our custom task execution role (has Secrets Manager access)
       create_task_exec_iam_role = false
       task_exec_iam_role_arn    = aws_iam_role.ecs_task_execution.arn
@@ -134,6 +138,9 @@ module "ecs" {
       # Use our custom task execution role (has Secrets Manager access)
       create_task_exec_iam_role = false
       task_exec_iam_role_arn    = aws_iam_role.ecs_task_execution.arn
+
+      # Workflow manages image tags via task def revisions
+      ignore_task_definition_changes = true
 
       desired_count = 0
 
