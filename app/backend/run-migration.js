@@ -19,7 +19,7 @@ async function run() {
   const secret = JSON.parse(res.SecretString);
 
   const client = new Client({
-    host: secret.host,
+    host: secret.host || process.env.DB_HOST,
     port: secret.port || 5432,
     database: secret.dbname || secret.dbName,
     user: secret.username,
