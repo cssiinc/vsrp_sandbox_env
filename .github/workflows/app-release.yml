@@ -1,15 +1,15 @@
-# vsrp-sandbox-env — App deploy (CD)
+# vsrp-sandbox-env — App release (CD)
 #
-# Deploys frontend + backend ECS services using the latest image for
+# Releases frontend + backend ECS services using the latest image for
 # the selected commit SHA. Images must already exist in ECR (built by
-# app-build.yml or a previous deploy).
+# app-build.yml or a previous release).
 #
 # Manual trigger only (workflow_dispatch) — run AFTER TFC has applied
 # any infrastructure changes.
 #
 # If no image exists for the SHA, the build step runs automatically.
 #
-name: App Deploy
+name: App Release
 
 on:
   workflow_dispatch:
