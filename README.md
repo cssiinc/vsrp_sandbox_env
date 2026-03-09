@@ -1,480 +1,422 @@
-# vsrp-sandbox-env: 3-Tier Private Containerized App
+# vsrp-sandbox-env: 3-Tier Application on AWS
 
-**Status:** Draft
-**VPC:** vsrp-sandbox-dev (10.3.0.0/24)
-**Subnets:** /27 per subnet (27 usable IPs each)
-**Repo:** `02_gh/vsrp_sandbox_env`
-**Region:** us-east-1 (us-east-1a, us-east-1b)
+A **3-tier web application** deployed on AWS using ECS Fargate, RDS PostgreSQL, and an internal Application Load Balancer. Designed for learning and as a reference implementation for containerized, private-only deployments.
+
+**Region:** us-east-1 | **VPC:** vsrp-sandbox-dev | **Access:** Internal only (VPN/TGW required)
 
 ---
 
-## 1. Design Goals
+## Table of Contents
 
-- **Private only** — No public subnets; access via AWS VPN through TGW or SSM bastion
-- **Containerized** — ECS Fargate (no EC2 node management)
-- **3-tier architecture** — Web (ALB) → App (Fargate) → Data (RDS PostgreSQL)
-- **Cost-conscious** — No NAT in spoke (hub provides); minimal Fargate sizing for sandbox
-- **Learning-focused** — End-to-end exposure to ECS, ECR, CI/CD, Terraform, APIs, and database flow
+1. [Architecture Overview](#1-architecture-overview)
+2. [AWS Services Deep Dive](#2-aws-services-deep-dive)
+3. [Request Flow: End-to-End](#3-request-flow-end-to-end)
+4. [Application Components](#4-application-components)
+5. [Infrastructure (Terraform)](#5-infrastructure-terraform)
+6. [CI/CD Pipelines](#6-cicd-pipelines)
+7. [Database & Secrets](#7-database--secrets)
+8. [Networking & Access](#8-networking--access)
+9. [Repository Structure](#9-repository-structure)
+10. [Operations & Troubleshooting](#10-operations--troubleshooting)
 
 ---
 
-## 2. Architecture
+## 1. Architecture Overview
 
-The architecture is a 3-tier design: an internal ALB fronting two ECS Fargate services (frontend and backend), with RDS PostgreSQL for event storage. The ALB uses path-based routing: `/api/*` goes to the backend (Node); everything else goes to the frontend (nginx + SPA). The backend proxies public APIs and writes events (logins, sessions, API calls) to RDS. All traffic is private; outbound to public APIs traverses TGW → hub NAT.
+### The 3 Tiers
+
+| Tier | AWS Service | Components | Purpose |
+|------|-------------|------------|---------|
+| **Presentation** | ALB + ECS Fargate | nginx + React SPA | Serves the UI; ALB routes requests |
+| **Application** | ECS Fargate | Node.js (Express) | Proxies public APIs; logs events to DB |
+| **Data** | RDS | PostgreSQL 15 | Stores application events (append-only) |
+
+### High-Level Diagram
 
 ```
-[ On-prem 10.14.0.0/16 ] --VPN/TGW--> [ Spoke VPC 10.3.0.0/24 ]
-                                              |
-                                              v
-                                  [ Internal ALB ] :80
-                                    /api/*  |    /*
-                                              v
-                     +--------------------+--------+
-                     v                                v
-            [ ECS: Frontend ]              [ ECS: Backend ] --outbound--> [ Public APIs ]
-            nginx + SPA :80                       Node :3000
-                                                          |
-                                                          v
-                                                  [ RDS PostgreSQL ]
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│  Client (On-prem 10.14.0.0/16 or Client VPN)                                    │
+└────────────────────────────────┬────────────────────────────────────────────────┘
+                                 │ HTTP :80
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│  TIER 1: Web (Presentation)                                                       │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │  Application Load Balancer (Internal)                                      │  │
+│  │  • Path-based routing: /api/* → backend  |  /* → frontend                  │  │
+│  │  • Health checks: /health (frontend), /api/health (backend)                │  │
+│  │  • Access logs → S3 (encrypted, 90-day retention)                         │  │
+│  └───────────────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────┬────────────────────────────────────────────────┘
+                                 │
+           ┌─────────────────────┴─────────────────────┐
+           │                                           │
+           ▼                                           ▼
+┌──────────────────────────────┐     ┌──────────────────────────────┐
+│  ECS Service: frontend       │     │  ECS Service: backend          │
+│  • nginx + React SPA         │     │  • Node.js + Express          │
+│  • Port 80                   │     │  • Port 3000                  │
+│  • Fargate 0.25 vCPU / 512MB │     │  • Fargate 0.25 vCPU / 512MB  │
+│  • Image: vsrp-sandbox-env/   │     │  • Init: run-migration.js     │
+│    frontend                  │     │  • Image: vsrp-sandbox-env/   │
+└──────────────────────────────┘     │    backend                    │
+                                     └──────────────┬───────────────┘
+                                                    │
+                              ┌─────────────────────┼─────────────────────┐
+                              │                     │                     │
+                              ▼                     ▼                     ▼
+                     ┌──────────────┐      ┌──────────────┐      ┌──────────────┐
+                     │  RDS         │      │  Secrets      │      │  Public APIs │
+                     │  PostgreSQL  │      │  Manager      │      │  (Dog CEO,   │
+                     │  db.t4g.micro│      │  (DB creds)   │      │   Open-Meteo) │
+                     └──────────────┘      └──────────────┘      └──────────────┘
 ```
 
-### Containers and Images
+### Key Design Decisions
 
-**2 images, 2 containers.** Separate ECR repos and ECS services for isolation and independent updates.
-
-| Container | Image | Contents | Port |
-|-----------|-------|----------|------|
-| **Frontend** | vsrp-sandbox-env/frontend | nginx + built SPA | 80 |
-| **Backend** | vsrp-sandbox-env/backend | Node.js (Express) | 3000 |
-
-### Web Tier (ALB)
-
-- Scheme: internal (no public-facing endpoint)
-- Subnets: app us-east-1a, app us-east-1b
-- Listener: HTTP port 80 (HTTPS/443 optional later when domain and ACM cert are ready)
-- **Path-based routing:** `/api/*` → backend target group (port 3000); default `/*` → frontend target group (port 80)
-- SPA calls `fetch('/api/...')` → browser sends to ALB → ALB routes to backend; same-origin, no CORS
-- **Health checks (target groups):** Frontend TG → path `/health`, port 80. Backend TG → path `/api/health`, port 3000. Both: 200 OK within timeout.
-- DNS: default ALB hostname (*.elb.amazonaws.com); custom Route 53 record added later if needed
-
-### App Tier (ECS Fargate)
-
-- Cluster: vsrp-sandbox-env
-- **2 ECS services:** frontend (nginx + SPA) and backend (Node)
-- Task sizing: Frontend 0.25 vCPU / 0.5 GB; Backend 0.25–0.5 vCPU / 0.5–1 GB (Node + DB)
-- Desired count: 0 initially (Terraform); first app-deploy sets each to 1 — custom images from day 1
-- Subnets: app us-east-1a, app us-east-1b (both services)
-- Images: 2 images in ECR (frontend, backend); built and pushed by GitHub Actions
-- Outbound: Frontend → ECR, CloudWatch; Backend → ECR, CloudWatch, public APIs, RDS (5432)
-
-### Data Tier (RDS PostgreSQL)
-
-- Engine: PostgreSQL 15
-- Instance: db.t4g.micro
-- Deployment: single-AZ (sandbox)
-- Storage: 20 GB gp3, encrypted
-- Subnets: data us-east-1a, us-east-1b (from network-hub)
-- Purpose: minimal event storage — logins, sessions, API calls — to understand 3-tier flow
-- Schema: single `app_events` table (append-only)
-- **Credentials:** AWS Secrets Manager. Terraform creates the secret; RDS stores it. ECS task definition injects secret ARN into backend container as env var (e.g. `DB_SECRET_ARN`). Backend fetches secret at startup via AWS SDK.
+- **Private only:** No public subnets; all access via VPN or Transit Gateway.
+- **Path-based routing:** Single ALB; `/api/*` → backend, everything else → frontend. No CORS; same-origin.
+- **Containerized:** Two ECS services, two ECR repos; independent builds and deploys.
+- **Secrets at runtime:** DB credentials stored in Secrets Manager; backend fetches via AWS SDK at startup.
+- **Schema via init container:** Migration runs before main backend container; no Terraform postgres provider.
 
 ---
 
-## 3. Security Groups
+## 2. AWS Services Deep Dive
 
-**Reuse existing security groups from network-hub.** App tier (frontend + backend) uses `app_security_group_id`; data tier uses `data_security_group_id`. We create only `alb-sg` in this Terraform (the ALB is our resource; network-hub typically does not provide it).
+### For Junior Engineers: What Each Service Does
 
-| SG | Source | Inbound | Outbound |
-|----|--------|---------|----------|
-| **alb-sg** | Created here | 80 from 10.14.0.0/16 (on-prem), 80 from TBD (Client VPN) | — |
-| **app-sg** | network-hub output | 80, 3000 from alb-sg | 443 (ECR, CloudWatch, public APIs); 5432 to data-sg |
-| **data-sg** | network-hub output | 5432 from app-sg | — |
+| AWS Service | What It Does | Why We Use It |
+|-------------|--------------|---------------|
+| **VPC** | Virtual Private Cloud — your isolated network in AWS. | All resources run inside a VPC; no default VPC usage. |
+| **Subnets** | Segments of the VPC (e.g., app vs data). | App subnets host ALB + ECS; data subnets host RDS. Separates tiers. |
+| **Security Groups** | Stateful firewalls at instance level. | Control which traffic can reach ALB, ECS, RDS. |
+| **Application Load Balancer (ALB)** | Distributes HTTP traffic to targets based on rules. | Path-based routing; health checks; single entry point. |
+| **ECS (Elastic Container Service)** | Runs Docker containers without managing servers. | Fargate = serverless containers; no EC2 to patch. |
+| **Fargate** | Serverless compute for ECS. | Pay per task; no capacity planning. |
+| **ECR** | Amazon Elastic Container Registry — stores Docker images. | Private registry; ECS pulls images from here. |
+| **RDS** | Managed relational database. | PostgreSQL; automated backups, patching. |
+| **Secrets Manager** | Secure storage for secrets (passwords, etc.). | DB credentials; rotate without code changes. |
+| **CloudWatch Logs** | Centralized log storage. | ECS tasks ship stdout/stderr here via `awslogs` driver. |
+| **S3** | Object storage. | ALB access logs; encrypted; lifecycle to expire old logs. |
+| **IAM** | Identity and access management. | Roles for ECS tasks (pull images, read secrets); OIDC for GitHub. |
 
-> **Why both 80 and 3000 on app-sg?** Frontend listens on 80, backend on 3000. ALB targets different ports per target group; both ECS tasks use app-sg, so we allow both.
->
-> **Terraform:** Use `data "aws_security_group"` or pass `app_security_group_id` and `data_security_group_id` as variables from network-hub remote state. Add rule to app-sg: inbound 80 and 3000 from alb-sg (if network-hub did not already allow this). Ensure data-sg allows 5432 from app-sg.
->
-> **Note:** Replace TBD with the AWS Client VPN endpoint CIDR once confirmed.
+### Security Group Flow
 
----
-
-## 4. Network & Access
-
-### Routing
-
-- Spoke VPC has 0.0.0.0/0 → TGW route confirmed
-- Hub NAT Gateway provisioned and routing confirmed
-- Fargate outbound (ECR pulls, CloudWatch logs) traverses TGW → hub NAT
-
-### Access Paths
-
-- **On-prem:** 10.14.0.0/16 → TGW → spoke VPC → internal ALB
-- **AWS Client VPN:** TBD CIDR → TGW → spoke VPC → internal ALB
-- No bastion initially
-
-### DNS
-
-Initial access uses the ALB's default AWS hostname. Custom DNS (e.g., sandbox.internal.company.com) via Route 53 private hosted zone is a future enhancement. VPN DNS resolution should be verified during testing.
-
----
-
-## 4a. Terraform Variables (Required)
-
-Variables can be supplied via `-var-file=deployments/vsrp_sandbox_dev.tfvars`, TFC workspace variables, or environment variables. Prefer remote state from network-hub for VPC/subnet/SG IDs when possible.
-
-| Variable | Type | Required | Description |
-|----------|------|---------|-------------|
-| `vpc_id` | string | Yes | VPC ID (e.g. from network-hub remote state: `vpc_id`) |
-| `app_subnet_ids` | list(string) | Yes | App subnets for ALB and ECS (e.g. `["subnet-xxx","subnet-yyy"]`) |
-| `data_subnet_ids` | list(string) | Yes | Data subnets for RDS |
-| `app_security_group_id` | string | Yes | Existing app tier SG (frontend + backend) |
-| `data_security_group_id` | string | Yes | Existing data tier SG (RDS) |
-| `aws_region` | string | No | AWS region; default `us-east-1` |
-| `environment` | string | No | Environment name; default `dev` |
-| `project` | string | No | Project name; default `vsrp-sandbox-env` |
-| `db_name` | string | No | RDS database name; default `vsrp_sandbox` |
-| `db_allocated_storage` | number | No | RDS storage GB; default `20` |
-| `alb_allowed_cidrs` | list(string) | No | CIDRs allowed to ALB; default `["10.14.0.0/16"]` |
-
-**Example tfvars:**
-
-```hcl
-vpc_id                    = "vpc-00b892d2d76661b6e"
-app_subnet_ids            = ["subnet-0b096f43b72141823", "subnet-0dac2d24c3e7446d8"]
-data_subnet_ids           = ["subnet-0616a22d68353b4b8", "subnet-03a5cddebbc3b02c1"]
-app_security_group_id     = "sg-0422971a38775f38d"
-data_security_group_id   = "sg-012b1039012d879d7"
-aws_region                = "us-east-1"
-environment               = "dev"
+```
+ALB SG:  Inbound 80 from 10.14.0.0/16 (on-prem)  →  Outbound to VPC
+App SG:  Inbound 80, 3000 from ALB SG            →  Outbound 443 (ECR, APIs, CloudWatch), 5432 (RDS)
+Data SG: Inbound 5432 from App SG                →  (none needed for DB)
 ```
 
-**Using remote state:** If network-hub Terraform outputs these values, use `terraform_remote_state` data source and pass outputs into locals/variables instead of hardcoding in tfvars.
+---
+
+## 3. Request Flow: End-to-End
+
+### Example: User Clicks "Fetch" for Dog API
+
+1. **Browser** sends `GET /api/dog` to ALB DNS (same-origin; no CORS).
+2. **ALB** matches path `/api/*` → forwards to **backend target group** (port 3000).
+3. **Backend ECS task** receives request at Express route `GET /api/dog`.
+4. **Backend** proxies to `https://dog.ceo/api/breeds/image/random`.
+5. **Backend** logs event to RDS: `INSERT INTO app_events (event_type, details) VALUES ('api_call', '{"endpoint":"/api/dog","status":200}')`.
+6. **Backend** returns JSON to ALB → ALB → browser.
+7. **Frontend React** renders the dog image.
+
+### Example: Initial Page Load
+
+1. **Browser** sends `GET /` to ALB.
+2. **ALB** default rule → forwards to **frontend target group** (port 80).
+3. **Frontend ECS task** (nginx) serves `index.html` and static assets.
+4. **React** loads; `ApiCard` components call `fetch('/api/dog')` etc. when user clicks.
+
+### Health Check Flow
+
+| Endpoint | Served By | Purpose |
+|----------|------------|---------|
+| `/health` | nginx (frontend) | ALB target group health check; returns 200 "ok" |
+| `/api/health` | Express (backend) | ALB target group health check; returns `{"status":"ok"}` |
+
+**Important:** Health endpoints must NOT call external APIs or DB; they must return quickly so ALB doesn't mark targets unhealthy.
 
 ---
 
-## 5. Container Registry (ECR)
+## 4. Application Components
 
-- Terraform creates 2 ECR repositories: vsrp-sandbox-env/frontend, vsrp-sandbox-env/backend
-- Lifecycle policy: retain last 10 images per repo, expire untagged after 7 days
-- Image URI format: `<account_id>.dkr.ecr.us-east-1.amazonaws.com/vsrp-sandbox-env/{frontend|backend}:<tag>`
-- Push: GitHub Actions (frontend-deploy, backend-deploy) build and push on path-specific changes
-- Pull: ECS Fargate pulls images from ECR via TGW → hub NAT path
+### Frontend
+
+| Layer | Technology | File / Config |
+|-------|-------------|---------------|
+| Build | React 18 + Vite | `app/frontend/package.json`, `vite.config.js` |
+| Runtime | nginx (Alpine) | `app/frontend/Dockerfile`, `nginx.conf` |
+| SPA entry | `App.jsx`, `ApiCard.jsx` | Fetches `/api/*`; rich displays per API type |
+
+**Dockerfile (multi-stage):**
+
+- Stage 1: Node builds SPA → `dist/`
+- Stage 2: nginx serves `dist/` from `/usr/share/nginx/html`
+
+**nginx.conf:** `try_files $uri $uri/ /index.html` for client-side routing; `/health` returns 200.
+
+### Backend
+
+| Layer | Technology | File |
+|-------|-------------|------|
+| Runtime | Node 20 (Alpine) | `app/backend/Dockerfile` |
+| API | Express 4 | `app/backend/index.js` |
+| DB access | `pg` + `@aws-sdk/client-secrets-manager` | `app/backend/db.js` |
+| Migration | Node script | `app/backend/run-migration.js` |
+
+**API Routes:**
+
+| Route | Upstream | Purpose |
+|-------|----------|---------|
+| `GET /api/health` | — | Health check (no external deps) |
+| `GET /api` | — | List available APIs |
+| `GET /api/dog` | dog.ceo | Random dog image |
+| `GET /api/bored` | boredapi.com | Random activity |
+| `GET /api/joke` | jokeapi.dev | Programming joke |
+| `GET /api/chuck` | chucknorris.io | Chuck Norris joke |
+| `GET /api/dadjoke` | icanhazdadjoke.com | Dad joke |
+| `GET /api/ghibli` | ghibliapi.herokuapp.com | Random Ghibli film |
+| `GET /api/weather` | open-meteo.com | Weather (lat/lon query params) |
+
+**DB connection:** Backend receives `DB_SECRET_ARN`, `DB_HOST`, `DB_PORT`, `DB_NAME` as env vars. It fetches username/password from Secrets Manager at startup; connects to RDS with SSL.
+
+### Init Container (Backend)
+
+Before the main backend container starts, an init container runs:
+
+```bash
+node run-migration.js
+```
+
+This executes `migrations/001_app_events.sql` to create the `app_events` table if it doesn't exist. The main backend starts only after init succeeds (`dependsOn: SUCCESS`).
 
 ---
 
-## 5a. Application: Frontend + Backend
+## 5. Infrastructure (Terraform)
 
-### Frontend Container (nginx + SPA)
+### File Layout
 
-| Component | Technology | Role |
-|-----------|------------|------|
-| SPA | **React (Vite)** recommended | Static assets built at image build time |
-| nginx | nginx | Serves SPA only; no proxy — ALB routes `/api/*` to backend |
+```
+environments/dev/
+├── data.tf      # Discovers VPC, subnets, SGs from AWS (network-hub)
+├── variables.tf # project, environment, vpc_name, aws_region
+├── alb.tf       # ALB, target groups, S3 for access logs, path-based rules
+├── ecs.tf       # ECS cluster, services (frontend, backend), IAM roles
+├── rds.tf       # RDS PostgreSQL, DB subnet group
+├── outputs.tf   # ECR URLs, ALB DNS, RDS endpoint, secret ARN
+└── deployments/
+    └── vsrp_sandbox_dev.tfvars.example
+```
 
-**Framework recommendation:** **React with Vite** — fast build, minimal setup, easy to extend. Use **Angular** if you prefer more structure or need alignment with tsap/atsap.
+### Network Discovery (data.tf)
 
-**Build:** Multi-stage Dockerfile — Node build stage → nginx serve stage. No Node at runtime.
+**No hardcoded VPC/subnet IDs.** Terraform discovers resources from AWS:
 
-**nginx config:** Serve SPA from build output; `try_files $uri $uri/ /index.html` for client-side routing.
+- **VPC:** `data "aws_vpc" "spoke"` filtered by `tag:Name = "vsrp-sandbox-dev"`
+- **Subnets:** All subnets in VPC, filtered by `tag:Type` = `"app"` or `"data"`
+- **Security groups:** All SGs in VPC, filtered by `tag:Type` = `"app"` or `"data"`
 
-**Health check:** Expose `/health` that returns 200. Keeps ALB health checks simple and avoids serving the full SPA for every probe.
+The **network-hub** (separate Terraform) creates the VPC and tags subnets/SGs. This env layer consumes them dynamically.
 
-### Backend Container (Node)
+### Key Resources
 
-| Component | Technology | Role |
-|-----------|------------|------|
-| API backend | Node.js (Express) | Proxies public APIs, writes events to RDS |
+| Resource | Module / Type | Notes |
+|----------|---------------|-------|
+| ALB | `terraform-aws-modules/alb/aws` ~> 10.0 | Internal; path rules; access logs to S3 |
+| ECS Cluster + Services | `terraform-aws-modules/ecs/aws` ~> 7.0 | Fargate; 2 services; `desired_count=0` initially |
+| RDS | `terraform-aws-modules/rds/aws` ~> 7.0 | PostgreSQL 15; db.t4g.micro; Secrets Manager for creds |
+| ECR | (module or resource) | 2 repos: frontend, backend |
+| CloudWatch Log Groups | `aws_cloudwatch_log_group` | frontend, backend, backend-init |
 
-**Build:** Single-stage Dockerfile — Node image with server code.
+### IAM Roles
 
-**Routing:** ALB forwards the full path (e.g. `/api/dog`) to this container. **Recommended:** Define Express routes under `/api` so the path matches exactly — e.g. `app.get('/api/dog', ...)`, `app.get('/api/health', ...)`. No path stripping; keeps routing clear.
+| Role | Used By | Permissions |
+|------|---------|-------------|
+| ECS Task Execution | Both services at task start | ECR pull, Secrets Manager (DB secret), CloudWatch Logs |
+| Backend Task Role | Backend container at runtime | Secrets Manager (backend fetches secret in code) |
 
-**Health check:** `GET /api/health` must return 200 quickly, without calling external APIs or the database. Used by ALB target group; prevents cascading failures if external APIs are slow.
+---
 
-### Public API Proxy (Backend)
+## 6. CI/CD Pipelines
 
-- SPA calls `fetch('/api/dog')` → browser sends to ALB → ALB routes to backend container.
-- Backend proxies to public APIs (e.g. [public-apis/public-apis](https://github.com/public-apis/public-apis)) — Dog CEO, Bored API, Open-Meteo, etc.
-- Outbound from backend via TGW → hub NAT.
-- Each proxy call is logged to RDS `app_events`.
+### app-build.yml (CI)
 
-### Schema Bootstrap: app_events Table
+**Trigger:** Push to `main` when `app/**` changes.
 
-**Recommended: Init container in the backend ECS task.** An init container runs a migration script before the main Node container starts. The migration SQL lives in the app repo (e.g. `app/backend/migrations/001_app_events.sql`), so schema changes stay with the application. No extra Terraform providers or manual steps.
+**Jobs:**
 
-| Approach | Pros | Cons |
-|----------|------|------|
-| **Init container** ✓ | Schema with app; runs on every deploy; no extra providers | Slightly more complex task definition |
-| Terraform postgresql provider | Schema as infra | Extra provider; credentials in Terraform |
-| Manual SQL | Simple | Not repeatable; easy to forget |
+1. **changes:** Path filter — `app/frontend/**` → build frontend; `app/backend/**` → build backend.
+2. **build-frontend** (if frontend changed): Build Docker image → push to ECR with tag `${{ github.sha }}` → wait for ECR scan → fail on CRITICAL, warn on HIGH.
+3. **build-backend** (if backend changed): Same for backend.
 
-**Implementation:** Add an `init` container to the backend task definition that runs `psql` or a small Node script to execute the migration, then exits. The main container starts only after init succeeds.
+**Handles:** ECR immutable tags; if image already exists (e.g., concurrent run), skip build. If push fails but image exists, treat as success.
 
-### Database: Event Storage
+**Auth:** GitHub OIDC → `secrets.AWS_ROLE_ARN`.
 
-Single table, append-only; minimal schema for learning 3-tier flow:
+### app-release.yml (CD)
+
+**Trigger:** Manual (`workflow_dispatch`) with inputs: `deploy_frontend`, `deploy_backend`.
+
+**Jobs:**
+
+1. **deploy-frontend:** Ensure image `${{ github.sha }}` exists in ECR; if not, build and push. Update ECS task definition with new image tag → `aws ecs update-service` with `desired-count=1`.
+2. **deploy-backend:** Same; updates both `backend` and `backend-init` container images.
+
+**Why manual:** Run after TFC applies Terraform; operator chooses when to deploy.
+
+**Required GitHub vars:** `AWS_ACCOUNT_ID`, `AWS_REGION`, `ECS_CLUSTER`.
+
+---
+
+## 7. Database & Secrets
+
+### Schema: app_events
 
 ```sql
 CREATE TABLE IF NOT EXISTS app_events (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  event_type VARCHAR(50),   -- 'login', 'session_start', 'api_call'
+  event_type VARCHAR(50),
   user_id    VARCHAR(255),
   details    JSONB
 );
 ```
 
-| event_type | When | Example details |
-|------------|------|-----------------|
-| login | User login or session start | `{"method": "sso"}` |
-| session_start | New browser session | `{"user_agent": "..."}` |
-| api_call | Each proxy call to public API | `{"endpoint": "...", "status": 200}` |
+| event_type | When | details example |
+|------------|------|-------------------|
+| api_call | Each proxy call | `{"endpoint":"/api/dog","status":200}` |
+| (future) login | User login | `{"method":"sso"}` |
+| (future) session_start | New session | `{"user_agent":"..."}` |
+
+### Credentials Flow
+
+1. **RDS** creates master user; `manage_master_user_password = true` → AWS stores password in **Secrets Manager**.
+2. **Terraform** passes `DB_SECRET_ARN` (and `DB_HOST`, `DB_PORT`, `DB_NAME`) to ECS task definition as environment variables.
+3. **Backend** at startup: `GetSecretValue` with `DB_SECRET_ARN` → parse JSON for `username` and `password` → create `pg.Pool`.
+4. **Init container** uses same env vars for migration.
+
+**Why not inject secret as env?** ECS can inject Secrets Manager values into env at task start, but this setup fetches in code so the pattern is explicit and portable.
 
 ---
 
-## 6. Repository Structure
+## 8. Networking & Access
 
-Single repo with infrastructure and application code separated by directory. CI/CD pipelines are triggered independently based on path filters.
+### Access Paths
+
+| Source | CIDR | How | Destination |
+|--------|------|-----|-------------|
+| On-prem | 10.14.0.0/16 | VPN → TGW → spoke VPC | ALB :80 |
+| Client VPN | (TBD) | AWS Client VPN → TGW → spoke VPC | ALB :80 |
+
+### Outbound
+
+- **Frontend:** ECR (pull), CloudWatch Logs.
+- **Backend:** ECR, CloudWatch, public APIs (HTTPS), RDS (5432). Outbound to internet via TGW → hub NAT.
+
+### ALB DNS
+
+- Internal ALB has a DNS name like `vsrp-sandbox-env-dev-xxxxxxxxx.us-east-1.elb.amazonaws.com`.
+- Resolvable only from within the VPC (or VPN-configured DNS).
+- Output: `alb_dns_name` from Terraform.
+
+---
+
+## 9. Repository Structure
 
 ```
 vsrp_sandbox_env/
-├── environments/dev/
-│   ├── main.tf
-│   ├── variables.tf
-│   ├── outputs.tf
-│   ├── security_groups.tf
-│   ├── alb.tf           # ALB + access logs S3 bucket
-│   ├── ecs.tf
-│   ├── ecr.tf
-│   ├── rds.tf
-│   ├── cloudwatch.tf    # Log groups, alarms
-│   └── deployments/vsrp_sandbox_dev.tfvars
+├── README.md
 ├── app/
 │   ├── frontend/
-│   │   ├── Dockerfile       # multi-stage: SPA build → nginx serve
-│   │   ├── nginx.conf       # SPA only; try_files; /health
+│   │   ├── Dockerfile          # Multi-stage: build SPA → nginx serve
+│   │   ├── nginx.conf           # SPA + /health
 │   │   ├── package.json
-│   │   ├── vite.config.ts   # React (Vite)
-│   │   └── src/             # SPA source
+│   │   ├── vite.config.js
+│   │   ├── index.html
+│   │   └── src/
+│   │       ├── main.jsx
+│   │       ├── App.jsx
+│   │       ├── ApiCard.jsx
+│   │       └── index.css
 │   └── backend/
 │       ├── Dockerfile
 │       ├── package.json
-│       ├── index.js         # Express: /api/* routes, /api/health
-│       ├── db.js            # RDS + Secrets Manager
+│       ├── index.js             # Express routes
+│       ├── db.js                # RDS + Secrets Manager
+│       ├── run-migration.js     # Init container entrypoint
 │       └── migrations/
 │           └── 001_app_events.sql
-├── .github/workflows/
-│   ├── terraform.yml
-│   ├── frontend-deploy.yml
-│   └── backend-deploy.yml
-└── README.md
+├── environments/dev/
+│   ├── data.tf
+│   ├── variables.tf
+│   ├── alb.tf
+│   ├── ecs.tf
+│   ├── rds.tf
+│   ├── outputs.tf
+│   └── deployments/
+│       └── vsrp_sandbox_dev.tfvars.example
+└── .github/workflows/
+    ├── app-build.yml            # Build + push on app/** changes
+    └── app-release.yml         # Manual deploy (workflow_dispatch)
 ```
 
 ---
 
-## 6a. Technology Stack: Terraform + Coding Languages
+## 10. Operations & Troubleshooting
 
-| Layer | Technology | Purpose |
-|-------|------------|---------|
-| **Infrastructure** | Terraform (HCL) | ECR, ALB, ECS, RDS, security groups, CloudWatch, IAM |
-| **API backend** | Node.js / TypeScript (Express) | Proxy public APIs, write events to RDS |
-| **Frontend** | React (Vite, TypeScript/JavaScript) | SPA, calls /api/* |
-| **Web server** | nginx | Serve SPA only (ALB routes /api/* to backend) |
-| **Database** | PostgreSQL (RDS) | Event storage via SQL |
-| **CI/CD** | GitHub Actions (YAML) | Build, push, deploy |
+### How to Deploy
 
-All infrastructure is Terraform-managed. All application logic is Node + React. No proprietary or vendor-specific languages.
+1. **Infrastructure:** Terraform Cloud runs on changes to `environments/dev/**`. Ensure TFC has applied.
+2. **Application:** In GitHub Actions, run **App Release** workflow. Select frontend/backend; it uses the commit SHA of the current branch/HEAD.
+3. **First deploy:** ECS services start with `desired_count=0`. App Release sets `desired_count=1` and updates task definition.
 
----
+### Viewing Logs
 
-## 7. CI/CD Pipelines
+- **Frontend:** CloudWatch Logs → log group for frontend (e.g. `/ecs/vsrp-sandbox-env/frontend`).
+- **Backend:** Log group for backend; init container has its own log group.
+- **ALB:** S3 bucket `vsrp-sandbox-env-dev-alb-logs-<account_id>`; prefix `alb/`.
 
-Two independent pipelines in one repo, separated by path-based triggers.
+### Common Issues
 
-### Infrastructure Pipeline (Terraform Cloud)
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| 502 from ALB | Backend unhealthy or not running | Check ECS service desired/running count; CloudWatch logs for backend errors |
+| "Token has expired" | AWS SSO session expired | Run `aws sso login --profile <profile>` |
+| DB connection refused | RDS not in correct subnet/SG | Verify data SG allows 5432 from app SG; check `DB_HOST`/`DB_PORT` |
+| ECR push denied | GitHub OIDC role missing or wrong | Ensure `AWS_ROLE_ARN` secret and trust policy allow `sts:AssumeRoleWithWebIdentity` |
+| Frontend blank / 404 | SPA routing; nginx config | Ensure `try_files $uri $uri/ /index.html` in nginx.conf |
 
-- Trigger: changes to `environments/**` merged to main
-- GitHub Actions runs `terraform fmt -check` and `terraform validate` as PR quality gate
-- TFC picks up changes via VCS-driven runs and executes plan/apply
-- TFC manages state; GitHub Actions never runs plan or apply
-- Auth: TFC → AWS via OIDC (tfc_aws_dynamic_credentials)
+### Health Checks
 
-### Application Pipelines (GitHub Actions)
+- **Frontend:** `curl http://<alb-dns>/health` → `ok`
+- **Backend:** `curl http://<alb-dns>/api/health` → `{"status":"ok","service":"backend"}`
 
-Two workflows for independent deploys:
+### Cost Estimate (Monthly, us-east-1)
 
-| Workflow | Trigger | Actions |
-|----------|---------|---------|
-| frontend-deploy.yml | changes to `app/frontend/**` | Build frontend image → push to ECR → update frontend ECS service |
-| backend-deploy.yml | changes to `app/backend/**` | Build backend image → push to ECR → update backend ECS service |
-
-- Steps (each): checkout → configure AWS creds (OIDC) → login to ECR → build Docker image → push to ECR → update respective ECS service (desired_count=1, force new deployment)
-- Auth: GitHub Actions → AWS via OIDC (separate IAM role with ECR + ECS deploy permissions only)
-- First deploy: Terraform provisions infra with both ECS services desired_count=0. First frontend-deploy and backend-deploy push custom images and set desired_count=1 — both needed for end-to-end
-
-### IAM Roles
-
-| Pipeline | Auth Method | Permissions |
-|-----------------|--------------------------------------|--------------------------------------------------------|
-| Terraform Cloud | OIDC (tfc_aws_dynamic_credentials) | Broad infra provisioning (VPC, ALB, ECS, ECR, IAM, CloudWatch) |
-| GitHub Actions | OIDC (GitHub → AWS federation) | ECR push, ECS UpdateService, CloudWatch Logs read |
+| Service | Config | Est. |
+|---------|--------|------|
+| ECS Fargate | 2 × 0.25 vCPU, 0.5 GB | ~$7 |
+| ALB | 1 ALB, ~1 LCU | ~$24 |
+| RDS | db.t4g.micro, 20 GB gp3 | ~$12–14 |
+| ECR | 2 repos, ~2 GB | ~$0.20 |
+| CloudWatch Logs | 3 groups, 14-day retention | ~$1–2 |
+| Secrets Manager | 1 secret | ~$0.40 |
+| S3 (ALB logs) | ~1 GB | ~$0.03 |
+| **Total** | | **~$45–50** |
 
 ---
 
-## 8. TFC Workspace Configuration
+## Quick Reference
 
-| Setting | Value |
-|---------------------|---------------------------------------------------------------|
-| Workspace Name | vsrp-sandbox-env-dev |
-| Working Directory | environments/dev |
-| VCS Trigger Paths | environments/dev/** |
-| Tags | vsrp-sandbox-env, dev |
-| Env Vars | TF_CLI_ARGS_plan, TF_CLI_ARGS_apply = -var-file=deployments/vsrp_sandbox_dev.tfvars |
-| Credentials | tfc_aws_dynamic_credentials (OIDC) |
-| VPC/Subnet Data | terraform_remote_state from network-hub workspace |
-
----
-
-## 9. Observability
-
-### Logging (Comprehensive — implement in Terraform)
-
-**CloudWatch Log Groups (one per service):**
-
-| Log Group | Source | Retention | Purpose |
-|-----------|--------|-----------|---------|
-| `/ecs/vsrp-sandbox-env/frontend` | Frontend container (nginx) | 14 days | Request logs, nginx access/error |
-| `/ecs/vsrp-sandbox-env/backend` | Backend container (Node) | 14 days | API logs, errors, stdout/stderr |
-| `/ecs/vsrp-sandbox-env/backend-init` | Backend init container | 7 days | Migration output, connection errors |
-
-**ECS Task Configuration:**
-- Use `awslogs` log driver for all containers
-- Set `awslogs-group`, `awslogs-region`, `awslogs-stream-prefix`
-- Application logs to stdout/stderr → auto-captured by awslogs
-
-**ALB Access Logs:**
-- Enable access logging to S3
-- Terraform creates S3 bucket (or use existing) with lifecycle/encryption
-- Logs: client IP, target, path, status, latency — useful for debugging and audit
-
-**Application Logging Best Practices (in code):**
-- Backend: Log each `/api/*` request (method, path, status, latency) to stdout
-- Backend: Log RDS connection success/failure at startup
-- Frontend: nginx access_log and error_log → stdout (default) — captured by awslogs
-- Use structured JSON logs for backend (e.g. `{ "level":"info", "msg":"...", "path":"/api/dog" }`)
-
-**Optional (if budget allows):**
-- RDS Enhanced Monitoring to CloudWatch — DB metrics (CPU, connections)
-- VPC Flow Logs — from network-hub if not already enabled
-
-### Monitoring & Alarms
-
-- ALB target group unhealthy host count alarm
-- ECS service running task count alarms (alert if 0 for either frontend or backend)
-- RDS CPU utilization alarm (optional, e.g. > 80%)
-- All alarms defined in Terraform (cloudwatch.tf)
-
----
-
-## 9a. Cost Estimate (Monthly, us-east-1)
-
-| Service | Config | Est. Monthly Cost |
-|---------|--------|--------------------|
-| **ECS Fargate** | Frontend: 0.25 vCPU, 0.5 GB; Backend: 0.25 vCPU, 0.5 GB (ARM) | ~\$7 (2 × ~\$3.50) |
-| **ALB** | 1 ALB, ~1 LCU avg | ~\$24 |
-| **RDS PostgreSQL** | db.t4g.micro, single-AZ, 20 GB gp3 | ~\$12–14 |
-| **ECR** | 2 repos, ~2 GB storage (10 images × ~200 MB) | ~\$0.20 |
-| **CloudWatch Logs** | 3 log groups, 14-day retention, ~1–2 GB ingest | ~\$1–2 |
-| **Secrets Manager** | 1 secret | ~\$0.40 |
-| **S3 (ALB logs)** | ALB access logs, ~1 GB | ~\$0.03 |
-| **NAT Gateway** | Hub provides; \$0 in this account | \$0 |
-| **Data transfer** | Minimal (private only) | ~\$0–1 |
-| **Total** | | **~\$45–50/month** |
-
-**Assumptions:** Linux ARM where available (Fargate); 730 hours/month; low sandbox traffic. Prices as of 2024–2025; verify at [AWS Pricing Calculator](https://calculator.aws/).
-
-**Cost levers:**
-- Fargate Spot (if tolerant): up to 70% savings on compute
-- RDS Reserved Instance (1 yr): ~\$8–9/month vs ~\$12
-- Reduce log retention to 7 days: slightly lower CloudWatch cost
-- Budget target \$300–350: this stack is well under; leaves room for experimentation
-
-Default tags applied via the AWS provider block in Terraform:
-
-| Tag Key | Value |
-|-------------|------------------------|
-| Project | vsrp-sandbox-env |
-| Environment | dev |
-| Owner | \<team or individual\> |
-| ManagedBy | terraform |
-
----
-
-## 11. Decisions Log
-
-| # | Decision | Choice | Rationale |
-|-----|------------------------|-------------------------------|--------------------------------------|
-| 1 | Architecture tiers | 3-tier (ALB → Fargate → RDS) | Full stack; event storage for learning |
-| 2 | ECS services | 2 services (frontend, backend) | Isolation; independent updates |
-| 3 | Containers/images | 2 images, 2 containers | Frontend: nginx+SPA; Backend: Node |
-| 4 | Fargate sizing | 0.25–0.5 vCPU / 0.5–1 GB | Node + DB; adjust if needed |
-| 5 | Autoscaling | None (desired_count=1 after first app-deploy) | Sandbox; no scaling needed |
-| 6 | Frontend framework | React (Vite) | Fast build, minimal setup; Angular if tsap alignment needed |
-| 7 | API backend | Node.js (Express) | Proxy public APIs, write events to RDS |
-| 8 | Public APIs | Dog CEO, Bored API, Open-Meteo, etc. | Learning; outbound via hub NAT |
-| 9 | Database | RDS PostgreSQL 15 | Single app_events table; minimal schema |
-| 10 | ALB CIDRs | 10.14.0.0/16 (on-prem) + TBD (Client VPN) | Two access paths |
-| 11 | Bastion | No | Access via on-prem and Client VPN |
-| 12 | HTTPS | HTTP (80) first | 443 when domain/cert ready |
-| 13 | Container registry | Amazon ECR | Native AWS; private network pull |
-| 14 | Infra pipeline | Terraform Cloud (VCS-driven) | Already set up with OIDC |
-| 15 | App pipelines | GitHub Actions | frontend-deploy, backend-deploy — path-specific build, push, deploy |
-| 16 | Auth (both pipelines) | OIDC (separate IAM roles) | No static keys; least privilege |
-| 17 | Log retention | 14 days (app), 7 days (init) | Balance visibility vs cost |
-| 18 | Bootstrap image | Custom images from day 1 | desired_count=0 in Terraform; first frontend-deploy and backend-deploy set desired_count=1 |
-| 19 | Security groups | Reuse app-sg, data-sg from network-hub | Minimize new infra; create alb-sg only |
-| 20 | Schema bootstrap | Init container in backend task | Schema with app; no extra Terraform provider |
-| 21 | DB credentials | Secrets Manager | ECS injects ARN; backend fetches at startup |
-| 22 | Health checks | Frontend /health, Backend /api/health | Explicit probes; no external deps in /api/health |
-| 23 | Logging | 3 log groups, ALB access logs to S3, 14-day retention | Comprehensive visibility; implement in Terraform |
-| 24 | Cost target | ~\$45–50/month (sandbox) | Fargate, ALB, RDS, ECR, CloudWatch, Secrets Manager |
-
----
-
-## 12. Initial Deployment Flow
-
-Custom image approach — no public/placeholder images. Terraform provisions infrastructure; first frontend-deploy and backend-deploy bootstrap the running services.
-
-```
-Step 1: terraform apply (TFC)
-        └── Creates: 2 ECR repos, alb-sg, ALB (access logs to S3), ECS cluster, RDS, Secrets Manager, CloudWatch (3 log groups, alarms)
-        └── 2 ECS services with desired_count=0
-        └── Uses app_sg, data_sg from network-hub (add rules if needed)
-
-Step 2: First app deploys (GitHub Actions)
-        └── frontend-deploy: build frontend image → push ECR → update frontend ECS service (desired_count=1)
-        └── backend-deploy: build backend image → push ECR → update backend ECS service (desired_count=1)
-        └── Both needed for end-to-end; can run in parallel or sequence
-
-Step 3: Verify
-        └── VPN → ALB hostname → SPA (frontend)
-        └── SPA calls /api/* → ALB routes to backend → Node proxies public API → returns data
-        └── Backend inserts api_call events into RDS
-```
-
-**Order:** Infrastructure first (RDS, Secrets Manager, ECS with desired_count=0), then app deploys. Backend init container creates `app_events` on first run. Secrets Manager holds DB credentials; ECS injects secret ARN; backend fetches at startup.
-
----
-
-## 13. Next Steps
-
-1. Confirm decisions in this document
-2. Create GitHub Actions OIDC IAM role for ECR/ECS deploy permissions
-3. Implement Terraform: 2 ECR repos, alb-sg, ALB (path-based routing, access logs to S3), 2 ECS services, RDS, Secrets Manager, CloudWatch (3 log groups, alarms). Use `app_security_group_id` and `data_security_group_id` from network-hub.
-4. Create TFC workspace with VCS trigger paths scoped to `environments/dev/**`
-5. Build frontend: React (Vite) + nginx + `/health` in `app/frontend/`
-6. Build backend: Node API with `/api/*` routes, `/api/health`, init container for schema, Secrets Manager integration in `app/backend/`
-7. Set up GitHub Actions frontend-deploy and backend-deploy workflows
-8. Run terraform apply to provision infrastructure
-9. Merge app changes to trigger first frontend-deploy and backend-deploy
-10. Test end-to-end: VPN → ALB → SPA → /api/* → public API + RDS event logging
+| Item | Value |
+|------|-------|
+| Cluster | `vsrp-sandbox-env-dev` |
+| ECS Services | `frontend`, `backend` |
+| ECR Repos | `vsrp-sandbox-env/frontend`, `vsrp-sandbox-env/backend` |
+| RDS Identifier | `vsrp-sandbox-env-dev` |
+| Database | `vsrp_sandbox` |
+| Backend Port | 3000 |
+| Frontend Port | 80 |
