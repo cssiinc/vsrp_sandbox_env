@@ -106,9 +106,9 @@ module "ecs" {
 
       container_definitions = {
         frontend = {
-          essential                = true
-          image                    = "${module.ecr["frontend"].repository_url}:latest"
-          readonlyRootFilesystem   = false # nginx needs writable /var/cache/nginx and /var/run
+          essential              = true
+          image                  = "${module.ecr["frontend"].repository_url}:latest"
+          readonlyRootFilesystem = false # nginx needs writable /var/cache/nginx and /var/run
           portMappings = [{
             name          = "frontend"
             containerPort = 80
@@ -168,6 +168,14 @@ module "ecs" {
             {
               name  = "DB_HOST"
               value = module.rds.db_instance_address
+            },
+            {
+              name  = "DB_PORT"
+              value = tostring(module.rds.db_instance_port)
+            },
+            {
+              name  = "DB_NAME"
+              value = local.db_name
             }
           ]
           logConfiguration = {
@@ -196,6 +204,14 @@ module "ecs" {
             {
               name  = "DB_HOST"
               value = module.rds.db_instance_address
+            },
+            {
+              name  = "DB_PORT"
+              value = tostring(module.rds.db_instance_port)
+            },
+            {
+              name  = "DB_NAME"
+              value = local.db_name
             }
           ]
           logConfiguration = {
