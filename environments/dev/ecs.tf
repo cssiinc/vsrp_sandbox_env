@@ -106,8 +106,9 @@ module "ecs" {
 
       container_definitions = {
         frontend = {
-          essential = true
-          image     = "${module.ecr["frontend"].repository_url}:latest"
+          essential                = true
+          image                    = "${module.ecr["frontend"].repository_url}:latest"
+          readonly_root_filesystem = false # nginx needs writable /var/cache/nginx and /var/run
           portMappings = [{
             name          = "frontend"
             containerPort = 80
