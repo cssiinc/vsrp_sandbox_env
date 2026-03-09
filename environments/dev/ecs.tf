@@ -160,10 +160,16 @@ module "ecs" {
           essential = false
           image     = "${module.ecr["backend"].repository_url}:latest"
           command   = ["node", "run-migration.js"]
-          environment = [{
-            name  = "DB_SECRET_ARN"
-            value = module.rds.db_instance_master_user_secret_arn
-          }]
+          environment = [
+            {
+              name  = "DB_SECRET_ARN"
+              value = module.rds.db_instance_master_user_secret_arn
+            },
+            {
+              name  = "DB_HOST"
+              value = module.rds.db_instance_address
+            }
+          ]
           logConfiguration = {
             logDriver = "awslogs"
             options = {
@@ -182,10 +188,16 @@ module "ecs" {
             hostPort      = 3000
             protocol      = "tcp"
           }]
-          environment = [{
-            name  = "DB_SECRET_ARN"
-            value = module.rds.db_instance_master_user_secret_arn
-          }]
+          environment = [
+            {
+              name  = "DB_SECRET_ARN"
+              value = module.rds.db_instance_master_user_secret_arn
+            },
+            {
+              name  = "DB_HOST"
+              value = module.rds.db_instance_address
+            }
+          ]
           logConfiguration = {
             logDriver = "awslogs"
             options = {
