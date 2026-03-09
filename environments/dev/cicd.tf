@@ -123,7 +123,8 @@ data "aws_iam_policy_document" "github_actions" {
     }
   }
 
-  # Pass the task execution role to ECS when registering task definitions
+  # Pass roles to ECS when registering task definitions
+  # Task execution role (ECR pull, logs, secrets) + per-service task roles
   statement {
     sid    = "PassRole"
     effect = "Allow"
@@ -131,7 +132,9 @@ data "aws_iam_policy_document" "github_actions" {
       "iam:PassRole"
     ]
     resources = [
-      aws_iam_role.ecs_task_execution.arn
+      aws_iam_role.ecs_task_execution.arn,
+      module.ecs.services["frontend"].tasks_iam_role_arn,
+      module.ecs.services["backend"].tasks_iam_role_arn
     ]
   }
 
