@@ -108,7 +108,7 @@ module "ecs" {
         frontend = {
           essential                = true
           image                    = "${module.ecr["frontend"].repository_url}:latest"
-          readonly_root_filesystem = false # nginx needs writable /var/cache/nginx and /var/run
+          readonlyRootFilesystem   = false # nginx needs writable /var/cache/nginx and /var/run
           portMappings = [{
             name          = "frontend"
             containerPort = 80
@@ -160,9 +160,9 @@ module "ecs" {
           essential = false
           image     = "${module.ecr["backend"].repository_url}:latest"
           command   = ["node", "run-migration.js"]
-          secrets = [{
-            name      = "DB_SECRET_ARN"
-            valueFrom = module.rds.db_instance_master_user_secret_arn
+          environment = [{
+            name  = "DB_SECRET_ARN"
+            value = module.rds.db_instance_master_user_secret_arn
           }]
           logConfiguration = {
             logDriver = "awslogs"
@@ -182,9 +182,9 @@ module "ecs" {
             hostPort      = 3000
             protocol      = "tcp"
           }]
-          secrets = [{
-            name      = "DB_SECRET_ARN"
-            valueFrom = module.rds.db_instance_master_user_secret_arn
+          environment = [{
+            name  = "DB_SECRET_ARN"
+            value = module.rds.db_instance_master_user_secret_arn
           }]
           logConfiguration = {
             logDriver = "awslogs"
@@ -206,4 +206,13 @@ module "ecs" {
   tags = {
     Name = "${var.project}-${var.environment}"
   }
+}
+
+# -------------------------------------------------------------------------------
+# Grant backend task role Secrets Manager access (containers call SM at runtime)
+# -------------------------------------------------------------------------------
+resource "aws_iam_role_policy" "backend_task_secrets" {
+  name   = "secrets-manager"
+  role   = module.ecs.services["backend"].tasks_iam_role_name
+  policy = data.aws_iam_policy_document.ecs_task_execution_secrets.json
 }
