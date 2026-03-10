@@ -1,215 +1,117 @@
 /**
- * CloudTrail S3 Log sync worker — discovers trail S3 bucket via DescribeTrails,
- * lists recent log files, downloads + gunzips + parses JSON records, and upserts
- * them into log_entries for the Log Explorer.
+ * CloudTrail Log Explorer sync worker — pulls ALL events (read + write) via
+ * LookupEvents API and stores them in log_entries for the Log Explorer.
+ *
+ * This is separate from the Change Log sync (cloudtrail.js) which only captures
+ * write events. The Log Explorer captures everything for SIEM-like investigation.
+ *
+ * LookupEvents covers management events (API calls, console logins, IAM changes,
+ * security group modifications, resource lifecycle, error events, cross-account
+ * assume role, etc.) — up to 90 days of history.
+ *
+ * Not covered: data events (S3 object-level, Lambda invocations, DynamoDB reads)
+ * which require trail data event logging and S3 access.
  */
-const { CloudTrailClient, DescribeTrailsCommand } = require('@aws-sdk/client-cloudtrail');
-const { S3Client, ListObjectsV2Command, GetObjectCommand } = require('@aws-sdk/client-s3');
-const { createGunzip } = require('zlib');
-const { pipeline } = require('stream/promises');
-const { Readable } = require('stream');
+const { CloudTrailClient, LookupEventsCommand } = require('@aws-sdk/client-cloudtrail');
 const { runSyncForAllAccounts, REGION } = require('./engine');
 
 const LOOKBACK_HOURS = parseInt(process.env.LOG_LOOKBACK_HOURS, 10) || 24;
-const MAX_FILES_PER_SYNC = parseInt(process.env.LOG_MAX_FILES, 10) || 200;
-const MAX_RECORDS_PER_SYNC = parseInt(process.env.LOG_MAX_RECORDS, 10) || 10000;
+const MAX_EVENTS = parseInt(process.env.LOG_MAX_RECORDS, 10) || 5000;
 
 /**
- * Build the S3 prefix for CloudTrail logs for a given date.
- * Format: AWSLogs/{accountId}/CloudTrail/{region}/{year}/{month}/{day}/
- */
-function buildPrefix(bucket, accountId, region, date) {
-  const y = date.getUTCFullYear();
-  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
-  const d = String(date.getUTCDate()).padStart(2, '0');
-  return `AWSLogs/${accountId}/CloudTrail/${region}/${y}/${m}/${d}/`;
-}
-
-/**
- * Stream-decompress a gzipped S3 object body into a string.
- */
-async function decompressStream(body) {
-  const chunks = [];
-  const gunzip = createGunzip();
-
-  // S3 body is a readable stream
-  const input = body instanceof Readable ? body : Readable.from(body);
-  input.pipe(gunzip);
-
-  for await (const chunk of gunzip) {
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks).toString('utf-8');
-}
-
-/**
- * Sync CloudTrail S3 logs for a single account.
+ * Sync CloudTrail events for a single account — both read and write.
  */
 async function syncAccount(credentials, account, pool) {
-  const ctClient = new CloudTrailClient({ region: REGION, credentials });
+  const client = new CloudTrailClient({ region: REGION, credentials });
+  const startTime = new Date(Date.now() - LOOKBACK_HOURS * 60 * 60 * 1000);
+  let totalUpserted = 0;
 
-  // Step 1: Discover the CloudTrail S3 bucket
-  let trailBucket = null;
-  let trailPrefix = '';
-  let trailRegions = [REGION];
+  // Pull ALL events (no ReadOnly filter = both read and write)
+  for (const readOnly of ['false', 'true']) {
+    let nextToken;
+    let batchCount = 0;
 
-  try {
-    const trails = await ctClient.send(new DescribeTrailsCommand({}));
-    const trail = (trails.trailList || []).find(t => t.IsMultiRegionTrail) ||
-                  (trails.trailList || [])[0];
-
-    if (!trail || !trail.S3BucketName) {
-      console.warn(`[cloudtrail-s3] No trail found for ${account.account_id}`);
-      return 0;
-    }
-
-    trailBucket = trail.S3BucketName;
-    trailPrefix = trail.S3KeyPrefix || '';
-    // If multi-region trail, pull logs from the home region
-    // (logs from all regions land in the same bucket under region-specific prefixes)
-    if (trail.IsMultiRegionTrail) {
-      trailRegions = [trail.HomeRegion || REGION];
-    }
-
-    console.log(`[cloudtrail-s3] Account ${account.account_id}: bucket=${trailBucket}, prefix=${trailPrefix || '(none)'}`);
-  } catch (err) {
-    console.warn(`[cloudtrail-s3] DescribeTrails failed for ${account.account_id}: ${err.message}`);
-    return 0;
-  }
-
-  // Step 2: Determine which S3 bucket to read from
-  // The trail bucket may be in a different account (centralized logging).
-  // We try to read with the assumed credentials first.
-  const s3Client = new S3Client({ region: REGION, credentials });
-
-  // Step 3: Build prefixes for the lookback period
-  const now = new Date();
-  const cutoff = new Date(now.getTime() - LOOKBACK_HOURS * 60 * 60 * 1000);
-  const prefixes = [];
-
-  // We need prefixes for each day + region in the lookback window
-  const regions = trailRegions;
-  for (let d = new Date(cutoff); d <= now; d.setUTCDate(d.getUTCDate() + 1)) {
-    for (const region of regions) {
-      const base = trailPrefix ? `${trailPrefix}/` : '';
-      prefixes.push(`${base}AWSLogs/${account.account_id}/CloudTrail/${region}/${d.getUTCFullYear()}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}/`);
-    }
-  }
-
-  // Step 4: List and download log files
-  let totalRecords = 0;
-  let filesProcessed = 0;
-
-  for (const prefix of prefixes) {
-    if (filesProcessed >= MAX_FILES_PER_SYNC || totalRecords >= MAX_RECORDS_PER_SYNC) break;
-
-    let continuationToken;
     do {
-      if (filesProcessed >= MAX_FILES_PER_SYNC || totalRecords >= MAX_RECORDS_PER_SYNC) break;
+      const res = await client.send(new LookupEventsCommand({
+        StartTime: startTime,
+        EndTime: new Date(),
+        MaxResults: 50,
+        NextToken: nextToken,
+        LookupAttributes: [{
+          AttributeKey: 'ReadOnly',
+          AttributeValue: readOnly,
+        }],
+      }));
 
-      let listResult;
-      try {
-        listResult = await s3Client.send(new ListObjectsV2Command({
-          Bucket: trailBucket,
-          Prefix: prefix,
-          MaxKeys: 100,
-          ContinuationToken: continuationToken,
-        }));
-      } catch (err) {
-        // Access denied is common for cross-account buckets
-        if (err.name === 'AccessDenied' || err.Code === 'AccessDenied') {
-          console.warn(`[cloudtrail-s3] Access denied listing ${trailBucket}/${prefix} for ${account.account_id}`);
-          break;
-        }
-        throw err;
-      }
-
-      const objects = (listResult.Contents || [])
-        .filter(obj => obj.Key.endsWith('.json.gz'))
-        .filter(obj => obj.LastModified >= cutoff);
-
-      for (const obj of objects) {
-        if (filesProcessed >= MAX_FILES_PER_SYNC || totalRecords >= MAX_RECORDS_PER_SYNC) break;
+      const events = res.Events || [];
+      for (const e of events) {
+        const detail = safeJson(e.CloudTrailEvent);
+        const userIdentity = detail?.userIdentity || {};
+        const username = userIdentity.userName ||
+          userIdentity.principalId?.split(':').pop() ||
+          userIdentity.arn?.split('/').pop() ||
+          userIdentity.invokedBy ||
+          'unknown';
 
         try {
-          const getResult = await s3Client.send(new GetObjectCommand({
-            Bucket: trailBucket,
-            Key: obj.Key,
-          }));
-
-          const jsonStr = await decompressStream(getResult.Body);
-          const data = JSON.parse(jsonStr);
-          const records = data.Records || [];
-
-          for (const record of records) {
-            if (totalRecords >= MAX_RECORDS_PER_SYNC) break;
-
-            const eventTime = record.eventTime ? new Date(record.eventTime) : null;
-            if (!eventTime || eventTime < cutoff) continue;
-
-            const userIdentity = record.userIdentity || {};
-            const username = userIdentity.userName ||
-              userIdentity.principalId?.split(':').pop() ||
-              userIdentity.arn?.split('/').pop() ||
-              userIdentity.invokedBy ||
-              'unknown';
-
-            try {
-              await pool.query(
-                `INSERT INTO log_entries
-                   (account_id, event_id, event_time, event_name, event_source,
-                    aws_region, event_type, username, user_type, source_ip, user_agent,
-                    request_params, response_elements, resources, error_code, error_message,
-                    read_only, management_event, recipient_account, shared_event_id,
-                    vpc_endpoint_id, raw_event)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
-                 ON CONFLICT (event_id) DO NOTHING`,
-                [
-                  account.account_id,
-                  record.eventID,
-                  eventTime,
-                  record.eventName,
-                  record.eventSource || '',
-                  record.awsRegion || REGION,
-                  record.eventType || null,
-                  username,
-                  userIdentity.type || null,
-                  record.sourceIPAddress || null,
-                  record.userAgent || null,
-                  JSON.stringify(record.requestParameters || null),
-                  JSON.stringify(record.responseElements || null),
-                  JSON.stringify(record.resources || []),
-                  record.errorCode || null,
-                  record.errorMessage || null,
-                  record.readOnly === true || record.readOnly === 'true',
-                  record.managementEvent !== false,
-                  record.recipientAccountId || null,
-                  record.sharedEventID || null,
-                  record.vpcEndpointId || null,
-                  JSON.stringify(record),
-                ]
-              );
-              totalRecords++;
-            } catch (dbErr) {
-              // Skip individual record errors (e.g. data too long)
-              if (!dbErr.message.includes('duplicate key')) {
-                console.warn(`[cloudtrail-s3] Record insert error: ${dbErr.message}`);
-              }
-            }
+          await pool.query(
+            `INSERT INTO log_entries
+               (account_id, event_id, event_time, event_name, event_source,
+                aws_region, event_type, username, user_type, source_ip, user_agent,
+                request_params, response_elements, resources, error_code, error_message,
+                read_only, management_event, recipient_account, shared_event_id,
+                vpc_endpoint_id, raw_event)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+             ON CONFLICT (event_id) DO NOTHING`,
+            [
+              account.account_id,
+              e.EventId,
+              e.EventTime,
+              e.EventName,
+              e.EventSource || detail?.eventSource || '',
+              detail?.awsRegion || REGION,
+              detail?.eventType || null,
+              username,
+              userIdentity.type || null,
+              detail?.sourceIPAddress || null,
+              detail?.userAgent || null,
+              JSON.stringify(detail?.requestParameters || null),
+              JSON.stringify(detail?.responseElements || null),
+              JSON.stringify(e.Resources || []),
+              detail?.errorCode || null,
+              detail?.errorMessage || null,
+              readOnly === 'true',
+              detail?.managementEvent !== false,
+              detail?.recipientAccountId || null,
+              detail?.sharedEventID || null,
+              detail?.vpcEndpointId || null,
+              JSON.stringify(detail || {}),
+            ]
+          );
+          totalUpserted++;
+        } catch (dbErr) {
+          if (!dbErr.message.includes('duplicate key')) {
+            console.warn(`[cloudtrail-s3] Record insert error: ${dbErr.message}`);
           }
-
-          filesProcessed++;
-        } catch (fileErr) {
-          console.warn(`[cloudtrail-s3] Failed to process ${obj.Key}: ${fileErr.message}`);
         }
       }
 
-      continuationToken = listResult.IsTruncated ? listResult.NextContinuationToken : undefined;
-    } while (continuationToken);
+      nextToken = res.NextToken;
+      batchCount += events.length;
+
+      // Cap total events to prevent runaway syncs
+      if (totalUpserted >= MAX_EVENTS) break;
+
+    } while (nextToken && batchCount < MAX_EVENTS);
+
+    if (totalUpserted >= MAX_EVENTS) break;
   }
 
-  console.log(`[cloudtrail-s3] Account ${account.account_id}: ${filesProcessed} files, ${totalRecords} records`);
-  return totalRecords;
+  return totalUpserted;
+}
+
+function safeJson(str) {
+  try { return JSON.parse(str); } catch { return null; }
 }
 
 async function syncAll() {
