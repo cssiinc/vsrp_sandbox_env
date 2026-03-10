@@ -11,6 +11,9 @@ import HealthEvents from './pages/HealthEvents'
 import SyncStatus from './pages/SyncStatus'
 import OpsHealth from './pages/OpsHealth'
 import LogExplorer from './pages/LogExplorer'
+import IAMCredentials from './pages/IAMCredentials'
+import GuardDuty from './pages/GuardDuty'
+import TrustedAdvisor from './pages/TrustedAdvisor'
 
 export default function App() {
   return (
@@ -26,6 +29,9 @@ export default function App() {
           <Route path="compliance" element={<Compliance />} />
           <Route path="health-events" element={<HealthEvents />} />
           <Route path="logs" element={<LogExplorer />} />
+          <Route path="iam" element={<IAMCredentials />} />
+          <Route path="guardduty" element={<GuardDuty />} />
+          <Route path="trusted-advisor" element={<TrustedAdvisor />} />
           <Route path="sync-status" element={<SyncStatus />} />
           <Route path="ops-health" element={<OpsHealth />} />
         </Route>

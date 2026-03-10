@@ -7,6 +7,9 @@ const costExplorer = require('../sync/cost-explorer');
 const configCompliance = require('../sync/config-compliance');
 const healthEvents = require('../sync/health-events');
 const cloudtrailS3 = require('../sync/cloudtrail-s3');
+const iamCredentials = require('../sync/iam-credentials');
+const guardduty = require('../sync/guardduty');
+const trustedAdvisor = require('../sync/trusted-advisor');
 
 const router = express.Router();
 
@@ -32,6 +35,9 @@ createSyncEndpoint('cost-explorer', costExplorer.syncAll);
 createSyncEndpoint('config-compliance', configCompliance.syncAll);
 createSyncEndpoint('health-events', healthEvents.syncAll);
 createSyncEndpoint('cloudtrail-s3', cloudtrailS3.syncAll);
+createSyncEndpoint('iam-credentials', iamCredentials.syncAll);
+createSyncEndpoint('guardduty', guardduty.syncAll);
+createSyncEndpoint('trusted-advisor', trustedAdvisor.syncAll);
 
 const ALL_MODULES = [
   { name: 'security-hub', fn: securityHub.syncAll },
@@ -41,6 +47,9 @@ const ALL_MODULES = [
   { name: 'config-compliance', fn: configCompliance.syncAll },
   { name: 'health-events', fn: healthEvents.syncAll },
   { name: 'cloudtrail-s3', fn: cloudtrailS3.syncAll },
+  { name: 'iam-credentials', fn: iamCredentials.syncAll },
+  { name: 'guardduty', fn: guardduty.syncAll },
+  { name: 'trusted-advisor', fn: trustedAdvisor.syncAll },
 ];
 
 // POST /api/sync/all — trigger all syncs

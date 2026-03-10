@@ -15,6 +15,9 @@ const complianceRouter = require('./routes/compliance');
 const healthEventsRouter = require('./routes/health-events');
 const opsHealthRouter = require('./routes/ops-health');
 const logExplorerRouter = require('./routes/log-explorer');
+const iamCredentialsRouter = require('./routes/iam-credentials');
+const guarddutyRouter = require('./routes/guardduty');
+const trustedAdvisorRouter = require('./routes/trusted-advisor');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -34,6 +37,9 @@ app.use('/api/compliance', complianceRouter);
 app.use('/api/health-events', healthEventsRouter);
 app.use('/api/ops-health', opsHealthRouter);
 app.use('/api/logs', logExplorerRouter);
+app.use('/api/iam', iamCredentialsRouter);
+app.use('/api/guardduty', guarddutyRouter);
+app.use('/api/trusted-advisor', trustedAdvisorRouter);
 
 // ---------------------------------------------------------------------------
 // Reusable proxy: fetches upstream URL with timeout, logs event, returns JSON
@@ -143,6 +149,9 @@ app.listen(PORT, async () => {
   const configCompliance = require('./sync/config-compliance');
   const healthEvents = require('./sync/health-events');
   const cloudtrailS3 = require('./sync/cloudtrail-s3');
+  const iamCredentials = require('./sync/iam-credentials');
+  const guardduty = require('./sync/guardduty');
+  const trustedAdvisor = require('./sync/trusted-advisor');
 
   async function runScheduledSync() {
     console.log('[scheduler] Starting background sync...');
@@ -153,6 +162,9 @@ app.listen(PORT, async () => {
     try { await configCompliance.syncAll(); } catch (err) { console.error('[scheduler] Config Compliance sync error:', err.message); }
     try { await healthEvents.syncAll(); } catch (err) { console.error('[scheduler] Health Events sync error:', err.message); }
     try { await cloudtrailS3.syncAll(); } catch (err) { console.error('[scheduler] CloudTrail S3 sync error:', err.message); }
+    try { await iamCredentials.syncAll(); } catch (err) { console.error('[scheduler] IAM Credentials sync error:', err.message); }
+    try { await guardduty.syncAll(); } catch (err) { console.error('[scheduler] GuardDuty sync error:', err.message); }
+    try { await trustedAdvisor.syncAll(); } catch (err) { console.error('[scheduler] Trusted Advisor sync error:', err.message); }
     console.log('[scheduler] Background sync complete');
   }
 

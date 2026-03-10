@@ -67,12 +67,21 @@ export default function SyncStatus() {
             )}
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button className="btn-secondary" onClick={() => triggerSync('security-hub')} disabled={syncing}>
-            Sync Security Hub
+            Security Hub
           </button>
           <button className="btn-secondary" onClick={() => triggerSync('cloudtrail')} disabled={syncing}>
-            Sync CloudTrail
+            CloudTrail
+          </button>
+          <button className="btn-secondary" onClick={() => triggerSync('iam-credentials')} disabled={syncing}>
+            IAM Creds
+          </button>
+          <button className="btn-secondary" onClick={() => triggerSync('guardduty')} disabled={syncing}>
+            GuardDuty
+          </button>
+          <button className="btn-secondary" onClick={() => triggerSync('trusted-advisor')} disabled={syncing}>
+            Trusted Advisor
           </button>
           <button className="btn-primary" onClick={() => triggerSync('all')} disabled={syncing}>
             {syncing ? 'Syncing...' : 'Sync All'}
