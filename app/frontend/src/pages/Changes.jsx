@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
+import { AccountName, useAccountMap, accountOptions } from '../hooks/useAccountMap'
 
 export default function Changes() {
+  const accountMap = useAccountMap()
   const [changes, setChanges] = useState([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -67,12 +69,14 @@ export default function Changes() {
       </div>
 
       <div className="filter-bar">
-        <input
+        <select
           className="form-input filter-select"
-          placeholder="Account ID"
           value={filters.account}
           onChange={(e) => { setPage(1); setFilters({ ...filters, account: e.target.value }) }}
-        />
+        >
+          <option value="">All Accounts</option>
+          {accountOptions(accountMap).map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
+        </select>
         <input
           className="form-input filter-select"
           placeholder="Username"
@@ -129,7 +133,7 @@ export default function Changes() {
                     <td style={{ color: 'var(--text)', fontWeight: 500 }}>{c.event_name}</td>
                     <td className="mono">{shortService(c.event_source)}</td>
                     <td>{c.username || '--'}</td>
-                    <td className="mono">{c.account_id}</td>
+                    <td><AccountName id={c.account_id} /></td>
                     <td>{c.aws_region || '--'}</td>
                     <td className="mono">{c.source_ip || '--'}</td>
                     <td>

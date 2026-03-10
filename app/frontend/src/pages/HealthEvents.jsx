@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { AccountName, useAccountMap, accountOptions } from '../hooks/useAccountMap'
 
 const STATUS_COLORS = {
   open: 'var(--error)',
@@ -13,6 +14,7 @@ const CATEGORY_LABELS = {
 }
 
 export default function HealthEvents() {
+  const accountMap = useAccountMap()
   const [events, setEvents] = useState([])
   const [total, setTotal] = useState(0)
   const [summary, setSummary] = useState(null)
@@ -118,12 +120,14 @@ export default function HealthEvents() {
           value={filters.service}
           onChange={(e) => { setPage(1); setFilters({ ...filters, service: e.target.value }) }}
         />
-        <input
+        <select
           className="form-input filter-select"
-          placeholder="Account ID"
           value={filters.account}
           onChange={(e) => { setPage(1); setFilters({ ...filters, account: e.target.value }) }}
-        />
+        >
+          <option value="">All Accounts</option>
+          {accountOptions(accountMap).map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
+        </select>
       </div>
 
       {loading ? (
@@ -167,7 +171,7 @@ export default function HealthEvents() {
                         {e.event_type_code}
                       </td>
                       <td>{CATEGORY_LABELS[e.event_type_category] || e.event_type_category}</td>
-                      <td className="mono">{e.account_id}</td>
+                      <td><AccountName id={e.account_id} /></td>
                       <td>{e.aws_region || 'global'}</td>
                       <td className="muted">{e.start_time ? new Date(e.start_time).toLocaleDateString() : '--'}</td>
                     </tr>

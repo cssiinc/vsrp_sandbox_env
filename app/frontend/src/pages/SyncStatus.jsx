@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { AccountName } from '../hooks/useAccountMap'
 
 const STATUS_COLORS = {
   completed: 'var(--success)',
@@ -109,7 +110,7 @@ export default function SyncStatus() {
               {syncData.syncs.map((s) => (
                 <tr key={s.id}>
                   <td style={{ fontWeight: 500, color: 'var(--text)' }}>{s.module}</td>
-                  <td className="mono">{s.account_id}</td>
+                  <td><AccountName id={s.account_id} /></td>
                   <td>
                     <span className="severity-badge" style={{ color: STATUS_COLORS[s.status] || 'var(--muted)', borderColor: STATUS_COLORS[s.status] || 'var(--muted)' }}>
                       {s.status}

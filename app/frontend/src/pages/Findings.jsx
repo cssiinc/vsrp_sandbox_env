@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { AccountName, useAccountMap, accountOptions } from '../hooks/useAccountMap'
 
 const SEVERITY_COLORS = {
   CRITICAL: 'var(--error)',
@@ -9,6 +10,7 @@ const SEVERITY_COLORS = {
 }
 
 export default function Findings() {
+  const accountMap = useAccountMap()
   const [findings, setFindings] = useState([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -89,12 +91,14 @@ export default function Findings() {
           <option value="guardduty">GuardDuty</option>
           <option value="access-analyzer">Access Analyzer</option>
         </select>
-        <input
+        <select
           className="form-input filter-select"
-          placeholder="Account ID"
           value={filters.account}
           onChange={(e) => { setPage(1); setFilters({ ...filters, account: e.target.value }) }}
-        />
+        >
+          <option value="">All Accounts</option>
+          {accountOptions(accountMap).map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
+        </select>
       </div>
 
       {loading ? (
@@ -135,7 +139,7 @@ export default function Findings() {
                     <td style={{ maxWidth: 350, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text)' }}>
                       {f.title}
                     </td>
-                    <td className="mono">{f.account_id}</td>
+                    <td><AccountName id={f.account_id} /></td>
                     <td>{f.source}</td>
                     <td className="mono" style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {f.resource_type || '--'}

@@ -6,6 +6,7 @@ const resourceInventory = require('../sync/resource-inventory');
 const costExplorer = require('../sync/cost-explorer');
 const configCompliance = require('../sync/config-compliance');
 const healthEvents = require('../sync/health-events');
+const cloudtrailS3 = require('../sync/cloudtrail-s3');
 
 const router = express.Router();
 
@@ -30,6 +31,7 @@ createSyncEndpoint('resource-inventory', resourceInventory.syncAll);
 createSyncEndpoint('cost-explorer', costExplorer.syncAll);
 createSyncEndpoint('config-compliance', configCompliance.syncAll);
 createSyncEndpoint('health-events', healthEvents.syncAll);
+createSyncEndpoint('cloudtrail-s3', cloudtrailS3.syncAll);
 
 const ALL_MODULES = [
   { name: 'security-hub', fn: securityHub.syncAll },
@@ -38,6 +40,7 @@ const ALL_MODULES = [
   { name: 'cost-explorer', fn: costExplorer.syncAll },
   { name: 'config-compliance', fn: configCompliance.syncAll },
   { name: 'health-events', fn: healthEvents.syncAll },
+  { name: 'cloudtrail-s3', fn: cloudtrailS3.syncAll },
 ];
 
 // POST /api/sync/all — trigger all syncs

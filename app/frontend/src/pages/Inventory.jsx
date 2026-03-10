@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
+import { AccountName, useAccountMap, accountOptions } from '../hooks/useAccountMap'
 
 const shortType = (t) => t ? t.replace('AWS::', '') : '--'
 
 export default function Inventory() {
+  const accountMap = useAccountMap()
   const [resources, setResources] = useState([])
   const [total, setTotal] = useState(0)
   const [summary, setSummary] = useState(null)
@@ -81,12 +83,14 @@ export default function Inventory() {
             <option key={t.resource_type} value={t.resource_type}>{shortType(t.resource_type)} ({t.count})</option>
           ))}
         </select>
-        <input
+        <select
           className="form-input filter-select"
-          placeholder="Account ID"
           value={filters.account}
           onChange={(e) => { setPage(1); setFilters({ ...filters, account: e.target.value }) }}
-        />
+        >
+          <option value="">All Accounts</option>
+          {accountOptions(accountMap).map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
+        </select>
         <input
           className="form-input filter-select"
           placeholder="Resource name"
@@ -132,7 +136,7 @@ export default function Inventory() {
                     <td className="mono" style={{ maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {r.resource_id}
                     </td>
-                    <td className="mono">{r.account_id}</td>
+                    <td><AccountName id={r.account_id} /></td>
                     <td>{r.aws_region}</td>
                     <td>
                       <span style={{ color: r.resource_status === 'OK' ? 'var(--success)' : 'var(--muted)' }}>
