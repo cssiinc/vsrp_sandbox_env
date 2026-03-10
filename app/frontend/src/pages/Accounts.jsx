@@ -70,22 +70,20 @@ export default function Accounts() {
 
   return (
     <div className="page">
-      <div className="page-header">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <h1>Monitored Accounts</h1>
-            <p className="page-subtitle">AWS accounts being tracked for health and changes</p>
-          </div>
-          <button className="btn-primary" onClick={() => setShowForm(!showForm)}>
-            {showForm ? 'Cancel' : '+ Add Account'}
-          </button>
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div>
+          <h1>Monitored Accounts</h1>
+          <p className="page-subtitle">AWS accounts tracked across your organization</p>
         </div>
+        <button className="btn-primary" onClick={() => setShowForm(!showForm)}>
+          {showForm ? 'Cancel' : '+ Add Account'}
+        </button>
       </div>
 
       {error && <p className="error-banner">{error}</p>}
 
       {showForm && (
-        <form className="card" onSubmit={handleSubmit} style={{ marginBottom: '1.5rem' }}>
+        <form className="card" onSubmit={handleSubmit} style={{ marginBottom: 16 }}>
           <div className="form-row">
             <label>
               <span className="form-label">Account ID</span>
@@ -115,13 +113,13 @@ export default function Accounts() {
               <input
                 type="text"
                 className="form-input"
-                placeholder="arn:aws:iam::123456789012:role/ReadOnlyAuditRole"
+                placeholder="arn:aws:iam::123456789012:role/HealthDashboardReadRole"
                 value={form.role_arn}
                 onChange={(e) => setForm({ ...form, role_arn: e.target.value })}
               />
             </label>
           </div>
-          <button type="submit" className="btn-primary" disabled={saving} style={{ marginTop: '1rem' }}>
+          <button type="submit" className="btn-primary" disabled={saving} style={{ marginTop: 16 }}>
             {saving ? 'Saving...' : 'Add Account'}
           </button>
         </form>
@@ -131,7 +129,13 @@ export default function Accounts() {
         <p className="muted">Loading accounts...</p>
       ) : accounts.length === 0 ? (
         <div className="card">
-          <p className="muted">No accounts configured yet. Add one to get started.</p>
+          <div className="empty-state">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.3 }}>
+              <path d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+            </svg>
+            <h3>No accounts configured</h3>
+            <p>Add your first AWS account to start monitoring. Each account needs the HealthDashboardReadRole deployed via StackSet.</p>
+          </div>
         </div>
       ) : (
         <div className="table-wrapper">
@@ -141,7 +145,7 @@ export default function Accounts() {
                 <th>Account ID</th>
                 <th>Name</th>
                 <th>Role ARN</th>
-                <th>Enabled</th>
+                <th>Status</th>
                 <th>Last Synced</th>
                 <th>Actions</th>
               </tr>
@@ -150,8 +154,8 @@ export default function Accounts() {
               {accounts.map((a) => (
                 <tr key={a.id}>
                   <td className="mono">{a.account_id}</td>
-                  <td>{a.account_name}</td>
-                  <td className="mono" style={{ fontSize: '0.8rem', maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  <td style={{ fontWeight: 500, color: 'var(--text)' }}>{a.account_name}</td>
+                  <td className="mono" style={{ maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {a.role_arn || '--'}
                   </td>
                   <td>
@@ -160,7 +164,7 @@ export default function Accounts() {
                       onClick={() => toggleEnabled(a)}
                       title="Click to toggle"
                     >
-                      {a.enabled ? 'Yes' : 'No'}
+                      {a.enabled ? 'Active' : 'Disabled'}
                     </button>
                   </td>
                   <td className="muted">{a.last_synced_at ? new Date(a.last_synced_at).toLocaleString() : 'Never'}</td>
