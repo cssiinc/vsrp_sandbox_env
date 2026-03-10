@@ -9,6 +9,7 @@ import Costs from './pages/Costs'
 import Compliance from './pages/Compliance'
 import HealthEvents from './pages/HealthEvents'
 import SyncStatus from './pages/SyncStatus'
+import OpsHealth from './pages/OpsHealth'
 
 export default function App() {
   return (
@@ -24,6 +25,7 @@ export default function App() {
           <Route path="compliance" element={<Compliance />} />
           <Route path="health-events" element={<HealthEvents />} />
           <Route path="sync-status" element={<SyncStatus />} />
+          <Route path="ops-health" element={<OpsHealth />} />
         </Route>
       </Routes>
     </BrowserRouter>

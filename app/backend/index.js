@@ -13,6 +13,7 @@ const inventoryRouter = require('./routes/inventory');
 const costsRouter = require('./routes/costs');
 const complianceRouter = require('./routes/compliance');
 const healthEventsRouter = require('./routes/health-events');
+const opsHealthRouter = require('./routes/ops-health');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -30,6 +31,7 @@ app.use('/api/inventory', inventoryRouter);
 app.use('/api/costs', costsRouter);
 app.use('/api/compliance', complianceRouter);
 app.use('/api/health-events', healthEventsRouter);
+app.use('/api/ops-health', opsHealthRouter);
 
 // ---------------------------------------------------------------------------
 // Reusable proxy: fetches upstream URL with timeout, logs event, returns JSON
