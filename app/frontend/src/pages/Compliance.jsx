@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { AccountName, useAccountMap, accountOptions } from '../hooks/useAccountMap'
 
 const COMPLIANCE_COLORS = {
   COMPLIANT: 'var(--success)',
@@ -8,6 +9,7 @@ const COMPLIANCE_COLORS = {
 }
 
 export default function Compliance() {
+  const accountMap = useAccountMap()
   const [rules, setRules] = useState([])
   const [total, setTotal] = useState(0)
   const [summary, setSummary] = useState(null)
@@ -99,12 +101,14 @@ export default function Compliance() {
           <option value="NOT_APPLICABLE">Not Applicable</option>
           <option value="INSUFFICIENT_DATA">Insufficient Data</option>
         </select>
-        <input
+        <select
           className="form-input filter-select"
-          placeholder="Account ID"
           value={filters.account}
           onChange={(e) => { setPage(1); setFilters({ ...filters, account: e.target.value }) }}
-        />
+        >
+          <option value="">All Accounts</option>
+          {accountOptions(accountMap).map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
+        </select>
         <input
           className="form-input filter-select"
           placeholder="Rule name"
@@ -151,7 +155,7 @@ export default function Compliance() {
                     <td style={{ color: 'var(--text)', fontWeight: 500, maxWidth: 350, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {r.config_rule_name}
                     </td>
-                    <td className="mono">{r.account_id}</td>
+                    <td><AccountName id={r.account_id} /></td>
                     <td style={{ color: 'var(--success)' }}>{r.compliant_count}</td>
                     <td style={{ color: r.non_compliant_count > 0 ? 'var(--error)' : 'var(--muted)' }}>{r.non_compliant_count}</td>
                     <td>{r.aws_region || '--'}</td>

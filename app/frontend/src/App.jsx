@@ -10,6 +10,7 @@ import Compliance from './pages/Compliance'
 import HealthEvents from './pages/HealthEvents'
 import SyncStatus from './pages/SyncStatus'
 import OpsHealth from './pages/OpsHealth'
+import LogExplorer from './pages/LogExplorer'
 
 export default function App() {
   return (
@@ -24,6 +25,7 @@ export default function App() {
           <Route path="costs" element={<Costs />} />
           <Route path="compliance" element={<Compliance />} />
           <Route path="health-events" element={<HealthEvents />} />
+          <Route path="logs" element={<LogExplorer />} />
           <Route path="sync-status" element={<SyncStatus />} />
           <Route path="ops-health" element={<OpsHealth />} />
         </Route>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useAccountMap, AccountName } from '../hooks/useAccountMap'
 
 const fmt = (n) => {
   if (n == null) return '--'
@@ -38,6 +39,7 @@ export default function Costs() {
   const [summary, setSummary] = useState(null)
   const [trend, setTrend] = useState([])
   const [forecasts, setForecasts] = useState([])
+  const accountMap = useAccountMap()
   const [services, setServices] = useState([])
   const [accountServices, setAccountServices] = useState([])
   const [loading, setLoading] = useState(true)
@@ -170,7 +172,7 @@ export default function Costs() {
                 onChange={(e) => { setSelectedAccount(e.target.value); setExpandedService(null) }}
               >
                 <option value="">All Accounts</option>
-                {allAccounts.map(a => <option key={a} value={a}>{a}</option>)}
+                {allAccounts.map(a => <option key={a} value={a}>{accountMap[a] ? `${accountMap[a]} (${a})` : a}</option>)}
               </select>
             )}
             <input
@@ -287,7 +289,7 @@ export default function Costs() {
                                       </p>
                                       {serviceDetail.by_account.map(a => (
                                         <div key={a.account_id} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: 12 }}>
-                                          <span className="mono">{a.account_id}</span>
+                                          <span title={a.account_id}>{accountMap[a.account_id] || a.account_id}</span>
                                           <span className="mono">{fmt(a.total_spend)}</span>
                                         </div>
                                       ))}
@@ -314,7 +316,7 @@ export default function Costs() {
                 return (
                   <div className="card" key={acct.account_id} style={{ marginBottom: 12 }}>
                     <div className="card-header">
-                      <h3 style={{ fontFamily: 'var(--font-mono, monospace)' }}>{acct.account_id}</h3>
+                      <h3>{accountMap[acct.account_id] || acct.account_id} <span className="mono muted" style={{ fontSize: 12, fontWeight: 400 }}>{acct.account_id}</span></h3>
                       <span className="card-badge">{fmt(acct.total)} MTD</span>
                     </div>
                     <div className="table-wrapper" style={{ marginTop: 0, border: 'none' }}>
