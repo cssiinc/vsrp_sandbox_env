@@ -1,20 +1,27 @@
 /**
- * vsrp-sandbox backend: proxies public APIs, logs to RDS
- * Routes: /api/health, /api/dog, /api/bored, /api/joke, /api/chuck, /api/dadjoke, /api/ghibli, /api/weather
- * Public APIs from https://github.com/public-apis/public-apis
+ * CloudOps Console backend
+ * - Health Dashboard: accounts, findings, changes, sync workers
+ * - Public API proxy (legacy)
  */
 const express = require('express');
 const { logEvent } = require('./db');
 const accountsRouter = require('./routes/accounts');
+const syncRouter = require('./routes/sync');
+const findingsRouter = require('./routes/findings');
+const changesRouter = require('./routes/changes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const PROXY_TIMEOUT_MS = 5000;
+const SYNC_INTERVAL_MS = parseInt(process.env.SYNC_INTERVAL_MIN, 10) * 60 * 1000 || 15 * 60 * 1000;
 
 app.use(express.json());
 
-// Health Dashboard routes
+// CloudOps routes
 app.use('/api/accounts', accountsRouter);
+app.use('/api/sync', syncRouter);
+app.use('/api/findings', findingsRouter);
+app.use('/api/changes', changesRouter);
 
 // ---------------------------------------------------------------------------
 // Reusable proxy: fetches upstream URL with timeout, logs event, returns JSON
@@ -115,4 +122,22 @@ app.listen(PORT, async () => {
   } catch (err) {
     console.warn('RDS not ready (will retry on first request):', err.message);
   }
+
+  // Background sync scheduler
+  const securityHub = require('./sync/security-hub');
+  const cloudtrail = require('./sync/cloudtrail');
+
+  async function runScheduledSync() {
+    console.log('[scheduler] Starting background sync...');
+    try { await securityHub.syncAll(); } catch (err) { console.error('[scheduler] Security Hub sync error:', err.message); }
+    try { await cloudtrail.syncAll(); } catch (err) { console.error('[scheduler] CloudTrail sync error:', err.message); }
+    console.log('[scheduler] Background sync complete');
+  }
+
+  // First sync after 30s startup delay, then every SYNC_INTERVAL_MS
+  setTimeout(() => {
+    runScheduledSync();
+    setInterval(runScheduledSync, SYNC_INTERVAL_MS);
+    console.log(`[scheduler] Sync scheduled every ${SYNC_INTERVAL_MS / 60000} minutes`);
+  }, 30000);
 });
