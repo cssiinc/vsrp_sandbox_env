@@ -1,13 +1,10 @@
 # vsrp-sandbox-env — App release (CD)
 #
-# Releases frontend + backend ECS services using the latest image for
-# the selected commit SHA. Images must already exist in ECR (built by
-# app-build.yml or a previous release).
+# Releases frontend + backend ECS services. Images must already exist
+# in ECR (built by app-build.yml). If not, builds as fallback.
 #
 # Manual trigger only (workflow_dispatch) — run AFTER TFC has applied
 # any infrastructure changes.
-#
-# If no image exists for the SHA, the build step runs automatically.
 #
 name: App Release
 
@@ -35,7 +32,7 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Frontend: ensure image exists, then deploy
+  # Frontend: resolve image tag, then deploy
   # ---------------------------------------------------------------------------
   deploy-frontend:
     name: Deploy Frontend
@@ -54,26 +51,43 @@ jobs:
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Check if image exists
-        id: check-image
+      - name: Resolve image tag
+        id: resolve
         run: |
+          # Try current SHA first, then find most recent image
+          SHA="${{ github.sha }}"
           if aws ecr describe-images \
             --repository-name vsrp-sandbox-env/frontend \
-            --image-ids imageTag=${{ github.sha }} \
+            --image-ids imageTag="$SHA" \
             --region ${{ env.AWS_REGION }} > /dev/null 2>&1; then
-            echo "Image ${{ github.sha }} found in ECR"
-            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Found image for commit SHA: $SHA"
+            echo "tag=$SHA" >> "$GITHUB_OUTPUT"
+            echo "needs_build=false" >> "$GITHUB_OUTPUT"
           else
-            echo "Image not found — will build"
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "No image for $SHA — checking for latest"
+            LATEST_TAG=$(aws ecr describe-images \
+              --repository-name vsrp-sandbox-env/frontend \
+              --query 'sort_by(imageDetails,& imagePushedAt)[-1].imageTags[0]' \
+              --output text \
+              --region ${{ env.AWS_REGION }} 2>/dev/null || echo "")
+            if [ -n "$LATEST_TAG" ] && [ "$LATEST_TAG" != "None" ]; then
+              echo "Using latest ECR image: $LATEST_TAG"
+              echo "tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+              echo "needs_build=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "No images found — will build"
+              echo "tag=$SHA" >> "$GITHUB_OUTPUT"
+              echo "needs_build=true" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
       - name: Set up Docker Buildx
-        if: steps.check-image.outputs.exists == 'false'
+        if: steps.resolve.outputs.needs_build == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push (fallback)
-        if: steps.check-image.outputs.exists == 'false'
+        if: steps.resolve.outputs.needs_build == 'true'
+        continue-on-error: true
         uses: docker/build-push-action@v6
         with:
           context: ./app/frontend
@@ -84,6 +98,9 @@ jobs:
 
       - name: Update task definition and deploy
         run: |
+          IMAGE_TAG="${{ steps.resolve.outputs.tag }}"
+          echo "Deploying frontend with tag: $IMAGE_TAG"
+
           TASK_DEF=$(aws ecs describe-services \
             --cluster ${{ env.ECS_CLUSTER }} \
             --services frontend \
@@ -93,7 +110,7 @@ jobs:
           aws ecs describe-task-definition --task-definition "$TASK_DEF" \
             --query 'taskDefinition' | \
             jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' | \
-            jq --arg IMAGE "${{ env.ECR_FRONTEND }}:${{ github.sha }}" \
+            jq --arg IMAGE "${{ env.ECR_FRONTEND }}:${IMAGE_TAG}" \
               '.containerDefinitions |= map(if .name == "frontend" then .image = $IMAGE else . end)' > /tmp/taskdef.json
 
           NEW_TASK_DEF=$(aws ecs register-task-definition \
@@ -108,10 +125,10 @@ jobs:
             --desired-count 1 \
             --region ${{ env.AWS_REGION }}
 
-          echo "Deployed frontend with image: ${{ env.ECR_FRONTEND }}:${{ github.sha }}"
+          echo "Deployed frontend with image: ${{ env.ECR_FRONTEND }}:${IMAGE_TAG}"
 
   # ---------------------------------------------------------------------------
-  # Backend: ensure image exists, then deploy
+  # Backend: resolve image tag, then deploy
   # ---------------------------------------------------------------------------
   deploy-backend:
     name: Deploy Backend
@@ -130,26 +147,42 @@ jobs:
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Check if image exists
-        id: check-image
+      - name: Resolve image tag
+        id: resolve
         run: |
+          SHA="${{ github.sha }}"
           if aws ecr describe-images \
             --repository-name vsrp-sandbox-env/backend \
-            --image-ids imageTag=${{ github.sha }} \
+            --image-ids imageTag="$SHA" \
             --region ${{ env.AWS_REGION }} > /dev/null 2>&1; then
-            echo "Image ${{ github.sha }} found in ECR"
-            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Found image for commit SHA: $SHA"
+            echo "tag=$SHA" >> "$GITHUB_OUTPUT"
+            echo "needs_build=false" >> "$GITHUB_OUTPUT"
           else
-            echo "Image not found — will build"
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "No image for $SHA — checking for latest"
+            LATEST_TAG=$(aws ecr describe-images \
+              --repository-name vsrp-sandbox-env/backend \
+              --query 'sort_by(imageDetails,& imagePushedAt)[-1].imageTags[0]' \
+              --output text \
+              --region ${{ env.AWS_REGION }} 2>/dev/null || echo "")
+            if [ -n "$LATEST_TAG" ] && [ "$LATEST_TAG" != "None" ]; then
+              echo "Using latest ECR image: $LATEST_TAG"
+              echo "tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+              echo "needs_build=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "No images found — will build"
+              echo "tag=$SHA" >> "$GITHUB_OUTPUT"
+              echo "needs_build=true" >> "$GITHUB_OUTPUT"
+            fi
           fi
 
       - name: Set up Docker Buildx
-        if: steps.check-image.outputs.exists == 'false'
+        if: steps.resolve.outputs.needs_build == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push (fallback)
-        if: steps.check-image.outputs.exists == 'false'
+        if: steps.resolve.outputs.needs_build == 'true'
+        continue-on-error: true
         uses: docker/build-push-action@v6
         with:
           context: ./app/backend
@@ -160,6 +193,9 @@ jobs:
 
       - name: Update task definition and deploy
         run: |
+          IMAGE_TAG="${{ steps.resolve.outputs.tag }}"
+          echo "Deploying backend with tag: $IMAGE_TAG"
+
           TASK_DEF=$(aws ecs describe-services \
             --cluster ${{ env.ECS_CLUSTER }} \
             --services backend \
@@ -169,7 +205,7 @@ jobs:
           aws ecs describe-task-definition --task-definition "$TASK_DEF" \
             --query 'taskDefinition' | \
             jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' | \
-            jq --arg IMAGE "${{ env.ECR_BACKEND }}:${{ github.sha }}" \
+            jq --arg IMAGE "${{ env.ECR_BACKEND }}:${IMAGE_TAG}" \
               '.containerDefinitions |= map(if (.name == "backend" or .name == "backend-init") then .image = $IMAGE else . end)' > /tmp/taskdef.json
 
           NEW_TASK_DEF=$(aws ecs register-task-definition \
@@ -184,4 +220,4 @@ jobs:
             --desired-count 1 \
             --region ${{ env.AWS_REGION }}
 
-          echo "Deployed backend with image: ${{ env.ECR_BACKEND }}:${{ github.sha }}"
+          echo "Deployed backend with image: ${{ env.ECR_BACKEND }}:${IMAGE_TAG}"
