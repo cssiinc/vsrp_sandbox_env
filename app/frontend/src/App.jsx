@@ -4,7 +4,7 @@ import Dashboard from './pages/Dashboard'
 import Accounts from './pages/Accounts'
 import Findings from './pages/Findings'
 import Changes from './pages/Changes'
-import PublicApis from './pages/PublicApis'
+import SyncStatus from './pages/SyncStatus'
 
 export default function App() {
   return (
@@ -15,7 +15,7 @@ export default function App() {
           <Route path="accounts" element={<Accounts />} />
           <Route path="findings" element={<Findings />} />
           <Route path="changes" element={<Changes />} />
-          <Route path="apis" element={<PublicApis />} />
+          <Route path="sync-status" element={<SyncStatus />} />
         </Route>
       </Routes>
     </BrowserRouter>

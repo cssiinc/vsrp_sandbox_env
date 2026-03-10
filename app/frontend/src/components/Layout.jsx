@@ -8,7 +8,7 @@ const NAV_ITEMS = [
 ]
 
 const SECONDARY_ITEMS = [
-  { to: '/apis', label: 'Public APIs', icon: 'M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4' },
+  { to: '/sync-status', label: 'Sync Status', icon: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15' },
 ]
 
 function SvgIcon({ d }) {
