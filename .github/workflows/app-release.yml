@@ -109,7 +109,7 @@ jobs:
 
           aws ecs describe-task-definition --task-definition "$TASK_DEF" \
             --query 'taskDefinition' | \
-            jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' | \
+            jq '{family, taskRoleArn, executionRoleArn, networkMode, containerDefinitions, volumes, placementConstraints, requiresCompatibilities, cpu, memory, tags, pidMode, ipcMode, proxyConfiguration, inferenceAccelerators, ephemeralStorage, runtimePlatform, enableFaultInjection} | with_entries(select(.value != null))' | \
             jq --arg IMAGE "${{ env.ECR_FRONTEND }}:${IMAGE_TAG}" \
               '.containerDefinitions |= map(if .name == "frontend" then .image = $IMAGE else . end)' > /tmp/taskdef.json
 
@@ -204,7 +204,7 @@ jobs:
 
           aws ecs describe-task-definition --task-definition "$TASK_DEF" \
             --query 'taskDefinition' | \
-            jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' | \
+            jq '{family, taskRoleArn, executionRoleArn, networkMode, containerDefinitions, volumes, placementConstraints, requiresCompatibilities, cpu, memory, tags, pidMode, ipcMode, proxyConfiguration, inferenceAccelerators, ephemeralStorage, runtimePlatform, enableFaultInjection} | with_entries(select(.value != null))' | \
             jq --arg IMAGE "${{ env.ECR_BACKEND }}:${IMAGE_TAG}" \
               '.containerDefinitions |= map(if (.name == "backend" or .name == "backend-init") then .image = $IMAGE else . end)' > /tmp/taskdef.json
 
