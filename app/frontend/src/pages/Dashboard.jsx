@@ -19,6 +19,7 @@ export default function Dashboard() {
   const [recentChanges, setRecentChanges] = useState([])
   const [syncStatus, setSyncStatus] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [syncing, setSyncing] = useState(false)
 
   const fetchAll = useCallback(() => {
     Promise.all([
@@ -43,6 +44,19 @@ export default function Dashboard() {
     return () => clearInterval(interval)
   }, [fetchAll])
 
+  const triggerSync = async () => {
+    setSyncing(true)
+    try {
+      await fetch('/api/sync/all', { method: 'POST' })
+      setTimeout(() => {
+        fetchAll()
+        setSyncing(false)
+      }, 8000)
+    } catch {
+      setSyncing(false)
+    }
+  }
+
   const enabled = accounts.filter((a) => a.enabled).length
   const fs = findingSummary || {}
   const shortService = (s) => s ? s.replace('.amazonaws.com', '') : ''
@@ -55,11 +69,16 @@ export default function Dashboard() {
           <h1>Dashboard</h1>
           <p className="page-subtitle">Multi-account health overview across your AWS organization</p>
         </div>
-        {lastSync && (
-          <span className="card-badge">
-            Last sync: {new Date(lastSync.completed_at).toLocaleTimeString()}
-          </span>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {lastSync && (
+            <span className="card-badge">
+              Last sync: {new Date(lastSync.completed_at).toLocaleTimeString()}
+            </span>
+          )}
+          <button className="btn-primary" onClick={triggerSync} disabled={syncing}>
+            {syncing ? 'Syncing...' : 'Sync Now'}
+          </button>
+        </div>
       </div>
 
       <div className="stat-grid">
