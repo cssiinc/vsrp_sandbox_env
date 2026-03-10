@@ -11,6 +11,7 @@ const iamCredentials = require('../sync/iam-credentials');
 const guardduty = require('../sync/guardduty');
 const trustedAdvisor = require('../sync/trusted-advisor');
 const inspector = require('../sync/inspector');
+const ssoIdentity = require('../sync/sso-identity');
 
 const router = express.Router();
 
@@ -40,6 +41,7 @@ createSyncEndpoint('iam-credentials', iamCredentials.syncAll);
 createSyncEndpoint('guardduty', guardduty.syncAll);
 createSyncEndpoint('trusted-advisor', trustedAdvisor.syncAll);
 createSyncEndpoint('inspector', inspector.syncAll);
+createSyncEndpoint('sso-identity', ssoIdentity.syncAll);
 
 const ALL_MODULES = [
   { name: 'security-hub', fn: securityHub.syncAll },
@@ -53,6 +55,7 @@ const ALL_MODULES = [
   { name: 'guardduty', fn: guardduty.syncAll },
   { name: 'trusted-advisor', fn: trustedAdvisor.syncAll },
   { name: 'inspector', fn: inspector.syncAll },
+  { name: 'sso-identity', fn: ssoIdentity.syncAll },
 ];
 
 // POST /api/sync/all — trigger all syncs

@@ -19,6 +19,7 @@ const iamCredentialsRouter = require('./routes/iam-credentials');
 const guarddutyRouter = require('./routes/guardduty');
 const trustedAdvisorRouter = require('./routes/trusted-advisor');
 const inspectorRouter = require('./routes/inspector');
+const ssoIdentityRouter = require('./routes/sso-identity');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -42,6 +43,7 @@ app.use('/api/iam', iamCredentialsRouter);
 app.use('/api/guardduty', guarddutyRouter);
 app.use('/api/trusted-advisor', trustedAdvisorRouter);
 app.use('/api/inspector', inspectorRouter);
+app.use('/api/sso', ssoIdentityRouter);
 
 // ---------------------------------------------------------------------------
 // Reusable proxy: fetches upstream URL with timeout, logs event, returns JSON
@@ -155,6 +157,7 @@ app.listen(PORT, async () => {
   const guardduty = require('./sync/guardduty');
   const trustedAdvisor = require('./sync/trusted-advisor');
   const inspector = require('./sync/inspector');
+  const ssoIdentity = require('./sync/sso-identity');
 
   async function runScheduledSync() {
     console.log('[scheduler] Starting background sync...');
@@ -169,6 +172,7 @@ app.listen(PORT, async () => {
     try { await guardduty.syncAll(); } catch (err) { console.error('[scheduler] GuardDuty sync error:', err.message); }
     try { await trustedAdvisor.syncAll(); } catch (err) { console.error('[scheduler] Trusted Advisor sync error:', err.message); }
     try { await inspector.syncAll(); } catch (err) { console.error('[scheduler] Inspector sync error:', err.message); }
+    try { await ssoIdentity.syncAll(); } catch (err) { console.error('[scheduler] SSO Identity sync error:', err.message); }
     console.log('[scheduler] Background sync complete');
   }
 
