@@ -14,6 +14,7 @@ import LogExplorer from './pages/LogExplorer'
 import IAMCredentials from './pages/IAMCredentials'
 import GuardDuty from './pages/GuardDuty'
 import TrustedAdvisor from './pages/TrustedAdvisor'
+import Inspector from './pages/Inspector'
 
 export default function App() {
   return (
@@ -32,6 +33,7 @@ export default function App() {
           <Route path="iam" element={<IAMCredentials />} />
           <Route path="guardduty" element={<GuardDuty />} />
           <Route path="trusted-advisor" element={<TrustedAdvisor />} />
+          <Route path="inspector" element={<Inspector />} />
           <Route path="sync-status" element={<SyncStatus />} />
           <Route path="ops-health" element={<OpsHealth />} />
         </Route>
