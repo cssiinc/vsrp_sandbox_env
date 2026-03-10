@@ -10,6 +10,7 @@ const cloudtrailS3 = require('../sync/cloudtrail-s3');
 const iamCredentials = require('../sync/iam-credentials');
 const guardduty = require('../sync/guardduty');
 const trustedAdvisor = require('../sync/trusted-advisor');
+const inspector = require('../sync/inspector');
 
 const router = express.Router();
 
@@ -38,6 +39,7 @@ createSyncEndpoint('cloudtrail-s3', cloudtrailS3.syncAll);
 createSyncEndpoint('iam-credentials', iamCredentials.syncAll);
 createSyncEndpoint('guardduty', guardduty.syncAll);
 createSyncEndpoint('trusted-advisor', trustedAdvisor.syncAll);
+createSyncEndpoint('inspector', inspector.syncAll);
 
 const ALL_MODULES = [
   { name: 'security-hub', fn: securityHub.syncAll },
@@ -50,6 +52,7 @@ const ALL_MODULES = [
   { name: 'iam-credentials', fn: iamCredentials.syncAll },
   { name: 'guardduty', fn: guardduty.syncAll },
   { name: 'trusted-advisor', fn: trustedAdvisor.syncAll },
+  { name: 'inspector', fn: inspector.syncAll },
 ];
 
 // POST /api/sync/all — trigger all syncs

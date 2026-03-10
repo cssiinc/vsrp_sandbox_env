@@ -83,6 +83,9 @@ export default function SyncStatus() {
           <button className="btn-secondary" onClick={() => triggerSync('trusted-advisor')} disabled={syncing}>
             Trusted Advisor
           </button>
+          <button className="btn-secondary" onClick={() => triggerSync('inspector')} disabled={syncing}>
+            Inspector
+          </button>
           <button className="btn-primary" onClick={() => triggerSync('all')} disabled={syncing}>
             {syncing ? 'Syncing...' : 'Sync All'}
           </button>
