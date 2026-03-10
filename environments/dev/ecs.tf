@@ -251,3 +251,22 @@ resource "aws_iam_role_policy" "backend_task_secrets" {
   role   = module.ecs.services["backend"].tasks_iam_role_name
   policy = data.aws_iam_policy_document.ecs_task_execution_secrets.json
 }
+
+# -------------------------------------------------------------------------------
+# Grant backend task role STS AssumeRole for cross-account Health Dashboard reads
+# The HealthDashboardReadRole is deployed via StackSet to target accounts
+# -------------------------------------------------------------------------------
+resource "aws_iam_role_policy" "backend_task_assume_role" {
+  name = "cross-account-assume-role"
+  role = module.ecs.services["backend"].tasks_iam_role_name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid      = "AssumeHealthDashboardReadRole"
+      Effect   = "Allow"
+      Action   = "sts:AssumeRole"
+      Resource = "arn:aws:iam::*:role/HealthDashboardReadRole"
+    }]
+  })
+}
