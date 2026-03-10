@@ -4,6 +4,10 @@ import Dashboard from './pages/Dashboard'
 import Accounts from './pages/Accounts'
 import Findings from './pages/Findings'
 import Changes from './pages/Changes'
+import Inventory from './pages/Inventory'
+import Costs from './pages/Costs'
+import Compliance from './pages/Compliance'
+import HealthEvents from './pages/HealthEvents'
 import SyncStatus from './pages/SyncStatus'
 
 export default function App() {
@@ -15,6 +19,10 @@ export default function App() {
           <Route path="accounts" element={<Accounts />} />
           <Route path="findings" element={<Findings />} />
           <Route path="changes" element={<Changes />} />
+          <Route path="inventory" element={<Inventory />} />
+          <Route path="costs" element={<Costs />} />
+          <Route path="compliance" element={<Compliance />} />
+          <Route path="health-events" element={<HealthEvents />} />
           <Route path="sync-status" element={<SyncStatus />} />
         </Route>
       </Routes>

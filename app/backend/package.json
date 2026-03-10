@@ -13,6 +13,9 @@
     "@aws-sdk/client-secrets-manager": "^3.450.0",
     "@aws-sdk/client-sts": "^3.450.0",
     "@aws-sdk/client-securityhub": "^3.450.0",
-    "@aws-sdk/client-cloudtrail": "^3.450.0"
+    "@aws-sdk/client-cloudtrail": "^3.450.0",
+    "@aws-sdk/client-config-service": "^3.450.0",
+    "@aws-sdk/client-cost-explorer": "^3.450.0",
+    "@aws-sdk/client-health": "^3.450.0"
   }
 }
