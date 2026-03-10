@@ -2,41 +2,43 @@ const express = require('express');
 const { getPool } = require('../db');
 const securityHub = require('../sync/security-hub');
 const cloudtrail = require('../sync/cloudtrail');
+const resourceInventory = require('../sync/resource-inventory');
+const costExplorer = require('../sync/cost-explorer');
+const configCompliance = require('../sync/config-compliance');
+const healthEvents = require('../sync/health-events');
 
 const router = express.Router();
 
 // Track running syncs to prevent overlaps
 const runningSyncs = new Set();
 
-// POST /api/sync/security-hub — trigger Security Hub sync
-router.post('/security-hub', async (req, res) => {
-  if (runningSyncs.has('security-hub')) {
-    return res.status(409).json({ error: 'Security Hub sync already running' });
-  }
-  runningSyncs.add('security-hub');
-  res.json({ message: 'Security Hub sync started' });
+// Helper to create sync endpoints
+function createSyncEndpoint(name, syncFn) {
+  router.post(`/${name}`, async (req, res) => {
+    if (runningSyncs.has(name)) {
+      return res.status(409).json({ error: `${name} sync already running` });
+    }
+    runningSyncs.add(name);
+    res.json({ message: `${name} sync started` });
+    try { await syncFn(); } finally { runningSyncs.delete(name); }
+  });
+}
 
-  try {
-    await securityHub.syncAll();
-  } finally {
-    runningSyncs.delete('security-hub');
-  }
-});
+createSyncEndpoint('security-hub', securityHub.syncAll);
+createSyncEndpoint('cloudtrail', cloudtrail.syncAll);
+createSyncEndpoint('resource-inventory', resourceInventory.syncAll);
+createSyncEndpoint('cost-explorer', costExplorer.syncAll);
+createSyncEndpoint('config-compliance', configCompliance.syncAll);
+createSyncEndpoint('health-events', healthEvents.syncAll);
 
-// POST /api/sync/cloudtrail — trigger CloudTrail sync
-router.post('/cloudtrail', async (req, res) => {
-  if (runningSyncs.has('cloudtrail')) {
-    return res.status(409).json({ error: 'CloudTrail sync already running' });
-  }
-  runningSyncs.add('cloudtrail');
-  res.json({ message: 'CloudTrail sync started' });
-
-  try {
-    await cloudtrail.syncAll();
-  } finally {
-    runningSyncs.delete('cloudtrail');
-  }
-});
+const ALL_MODULES = [
+  { name: 'security-hub', fn: securityHub.syncAll },
+  { name: 'cloudtrail', fn: cloudtrail.syncAll },
+  { name: 'resource-inventory', fn: resourceInventory.syncAll },
+  { name: 'cost-explorer', fn: costExplorer.syncAll },
+  { name: 'config-compliance', fn: configCompliance.syncAll },
+  { name: 'health-events', fn: healthEvents.syncAll },
+];
 
 // POST /api/sync/all — trigger all syncs
 router.post('/all', async (req, res) => {
@@ -45,19 +47,11 @@ router.post('/all', async (req, res) => {
     return res.status(409).json({ error: `Syncs already running: ${running.join(', ')}` });
   }
 
-  runningSyncs.add('security-hub');
-  runningSyncs.add('cloudtrail');
+  for (const m of ALL_MODULES) runningSyncs.add(m.name);
   res.json({ message: 'All syncs started' });
 
-  try {
-    await securityHub.syncAll();
-  } finally {
-    runningSyncs.delete('security-hub');
-  }
-  try {
-    await cloudtrail.syncAll();
-  } finally {
-    runningSyncs.delete('cloudtrail');
+  for (const m of ALL_MODULES) {
+    try { await m.fn(); } finally { runningSyncs.delete(m.name); }
   }
 });
 

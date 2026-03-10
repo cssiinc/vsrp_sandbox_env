@@ -9,6 +9,10 @@ const accountsRouter = require('./routes/accounts');
 const syncRouter = require('./routes/sync');
 const findingsRouter = require('./routes/findings');
 const changesRouter = require('./routes/changes');
+const inventoryRouter = require('./routes/inventory');
+const costsRouter = require('./routes/costs');
+const complianceRouter = require('./routes/compliance');
+const healthEventsRouter = require('./routes/health-events');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -22,6 +26,10 @@ app.use('/api/accounts', accountsRouter);
 app.use('/api/sync', syncRouter);
 app.use('/api/findings', findingsRouter);
 app.use('/api/changes', changesRouter);
+app.use('/api/inventory', inventoryRouter);
+app.use('/api/costs', costsRouter);
+app.use('/api/compliance', complianceRouter);
+app.use('/api/health-events', healthEventsRouter);
 
 // ---------------------------------------------------------------------------
 // Reusable proxy: fetches upstream URL with timeout, logs event, returns JSON
@@ -126,11 +134,19 @@ app.listen(PORT, async () => {
   // Background sync scheduler
   const securityHub = require('./sync/security-hub');
   const cloudtrail = require('./sync/cloudtrail');
+  const resourceInventory = require('./sync/resource-inventory');
+  const costExplorer = require('./sync/cost-explorer');
+  const configCompliance = require('./sync/config-compliance');
+  const healthEvents = require('./sync/health-events');
 
   async function runScheduledSync() {
     console.log('[scheduler] Starting background sync...');
     try { await securityHub.syncAll(); } catch (err) { console.error('[scheduler] Security Hub sync error:', err.message); }
     try { await cloudtrail.syncAll(); } catch (err) { console.error('[scheduler] CloudTrail sync error:', err.message); }
+    try { await resourceInventory.syncAll(); } catch (err) { console.error('[scheduler] Resource Inventory sync error:', err.message); }
+    try { await costExplorer.syncAll(); } catch (err) { console.error('[scheduler] Cost Explorer sync error:', err.message); }
+    try { await configCompliance.syncAll(); } catch (err) { console.error('[scheduler] Config Compliance sync error:', err.message); }
+    try { await healthEvents.syncAll(); } catch (err) { console.error('[scheduler] Health Events sync error:', err.message); }
     console.log('[scheduler] Background sync complete');
   }
 

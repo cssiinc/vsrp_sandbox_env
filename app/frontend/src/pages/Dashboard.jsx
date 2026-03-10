@@ -21,6 +21,11 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
 
+  const [inventorySummary, setInventorySummary] = useState(null)
+  const [costSummary, setCostSummary] = useState(null)
+  const [complianceSummary, setComplianceSummary] = useState(null)
+  const [healthSummary, setHealthSummary] = useState(null)
+
   const fetchAll = useCallback(() => {
     Promise.all([
       fetch('/api/accounts').then((r) => r.json()).catch(() => []),
@@ -28,12 +33,20 @@ export default function Dashboard() {
       fetch('/api/changes/summary').then((r) => r.json()).catch(() => null),
       fetch('/api/changes?limit=8').then((r) => r.json()).catch(() => ({ changes: [] })),
       fetch('/api/sync/status').then((r) => r.json()).catch(() => null),
-    ]).then(([accts, findings, changes, recent, sync]) => {
+      fetch('/api/inventory/summary').then((r) => r.json()).catch(() => null),
+      fetch('/api/costs/summary').then((r) => r.json()).catch(() => null),
+      fetch('/api/compliance/summary').then((r) => r.json()).catch(() => null),
+      fetch('/api/health-events/summary').then((r) => r.json()).catch(() => null),
+    ]).then(([accts, findings, changes, recent, sync, inv, cost, comp, health]) => {
       setAccounts(Array.isArray(accts) ? accts : [])
       setFindingSummary(findings)
       setChangesSummary(changes)
       setRecentChanges(recent.changes || [])
       setSyncStatus(sync)
+      setInventorySummary(inv)
+      setCostSummary(cost)
+      setComplianceSummary(comp)
+      setHealthSummary(health)
       setLoading(false)
     })
   }, [])
@@ -115,10 +128,32 @@ export default function Dashboard() {
           borderColor="var(--muted)"
         />
         <StatCard
-          title="Low / Info"
-          value={fs.total != null ? (fs.LOW || 0) + (fs.INFORMATIONAL || 0) : '--'}
-          subtitle="Low + Informational"
+          title="Resources"
+          value={inventorySummary?.total ?? '--'}
+          subtitle={inventorySummary ? `${inventorySummary.types?.length || 0} types` : 'Sync to populate'}
           borderColor="var(--accent)"
+        />
+        <StatCard
+          title="MTD Spend"
+          value={costSummary?.total != null ? `$${costSummary.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '--'}
+          subtitle={costSummary?.by_account ? `${costSummary.by_account.length} account(s)` : 'Sync to populate'}
+          borderColor="#f59e0b"
+        />
+        <StatCard
+          title="Compliance"
+          value={complianceSummary?.summary?.COMPLIANT != null
+            ? `${Math.round((complianceSummary.summary.COMPLIANT / Math.max(1, Object.values(complianceSummary.summary).reduce((a, b) => a + b, 0))) * 100)}%`
+            : '--'}
+          subtitle={complianceSummary?.summary?.NON_COMPLIANT ? `${complianceSummary.summary.NON_COMPLIANT} non-compliant` : 'Sync to populate'}
+          borderColor="var(--success)"
+          color={complianceSummary?.summary?.NON_COMPLIANT > 0 ? 'var(--warning)' : 'var(--success)'}
+        />
+        <StatCard
+          title="Health Events"
+          value={healthSummary?.open ?? '--'}
+          subtitle={healthSummary ? `${healthSummary.upcoming || 0} upcoming, ${healthSummary.total || 0} total` : 'Sync to populate'}
+          borderColor={healthSummary?.open > 0 ? 'var(--error)' : 'var(--muted)'}
+          color={healthSummary?.open > 0 ? 'var(--error)' : undefined}
         />
       </div>
 
