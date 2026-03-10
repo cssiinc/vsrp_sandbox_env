@@ -1,27 +1,23 @@
-import ApiCard from './ApiCard'
-
-const APIS = [
-  { id: 'dog', name: 'Dog CEO', path: '/api/dog', description: 'Random dog images' },
-  { id: 'bored', name: 'Bored API', path: '/api/bored', description: 'Random activity suggestions' },
-  { id: 'joke', name: 'JokeAPI', path: '/api/joke', description: 'Programming jokes' },
-  { id: 'chuck', name: 'Chuck Norris', path: '/api/chuck', description: 'Chuck Norris facts' },
-  { id: 'dadjoke', name: 'Dad Jokes', path: '/api/dadjoke', description: 'icanhazdadjoke' },
-  { id: 'ghibli', name: 'Studio Ghibli', path: '/api/ghibli', description: 'Random film info' },
-  { id: 'weather', name: 'Open-Meteo', path: '/api/weather', description: 'Weather (NYC default)' },
-]
+import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import Layout from './components/Layout'
+import Dashboard from './pages/Dashboard'
+import Accounts from './pages/Accounts'
+import Findings from './pages/Findings'
+import Changes from './pages/Changes'
+import PublicApis from './pages/PublicApis'
 
 export default function App() {
   return (
-    <div className="app">
-      <header className="app-header">
-        <h1>Public APIs Explorer</h1>
-        <p>Proxy via backend • Events logged to RDS • <a href="https://github.com/public-apis/public-apis" target="_blank" rel="noopener noreferrer">public-apis</a></p>
-      </header>
-      <div className="api-grid">
-        {APIS.map((api) => (
-          <ApiCard key={api.id} {...api} />
-        ))}
-      </div>
-    </div>
+    <BrowserRouter>
+      <Routes>
+        <Route element={<Layout />}>
+          <Route index element={<Dashboard />} />
+          <Route path="accounts" element={<Accounts />} />
+          <Route path="findings" element={<Findings />} />
+          <Route path="changes" element={<Changes />} />
+          <Route path="apis" element={<PublicApis />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
   )
 }
