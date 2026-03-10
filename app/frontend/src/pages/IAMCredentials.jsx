@@ -28,7 +28,43 @@ function BoolBadge({ value, trueLabel = 'Yes', falseLabel = 'No', invert = false
   )
 }
 
+const TAB_STYLE = (active) => ({
+  padding: '8px 20px',
+  border: 'none',
+  background: active ? 'var(--accent)' : 'transparent',
+  color: active ? '#fff' : 'var(--muted)',
+  borderRadius: 6,
+  cursor: 'pointer',
+  fontWeight: active ? 600 : 400,
+  fontSize: 14,
+})
+
 export default function IAMCredentials() {
+  const [tab, setTab] = useState('iam')
+
+  return (
+    <div className="page">
+      <div className="page-header">
+        <h1>Identity & Access</h1>
+        <p className="page-subtitle">IAM users, SSO Identity Center users, and group assignments</p>
+      </div>
+
+      <div style={{ display: 'flex', gap: 4, marginBottom: 20, background: 'var(--bg-secondary, #1a1a2e)', padding: 4, borderRadius: 8, width: 'fit-content' }}>
+        <button style={TAB_STYLE(tab === 'iam')} onClick={() => setTab('iam')}>IAM Users</button>
+        <button style={TAB_STYLE(tab === 'sso')} onClick={() => setTab('sso')}>SSO Users</button>
+        <button style={TAB_STYLE(tab === 'groups')} onClick={() => setTab('groups')}>SSO Groups</button>
+      </div>
+
+      {tab === 'iam' && <IAMUsersTab />}
+      {tab === 'sso' && <SSOUsersTab />}
+      {tab === 'groups' && <SSOGroupsTab />}
+    </div>
+  )
+}
+
+// ─── IAM Users Tab ───────────────────────────────────────────────────────────
+
+function IAMUsersTab() {
   const [data, setData] = useState({ credentials: [], total: 0 })
   const [summary, setSummary] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -63,12 +99,7 @@ export default function IAMCredentials() {
   const totalPages = Math.ceil(data.total / 50)
 
   return (
-    <div className="page">
-      <div className="page-header">
-        <h1>IAM Credential Report</h1>
-        <p className="page-subtitle">User credential hygiene across all accounts — MFA status, access key age, password activity</p>
-      </div>
-
+    <>
       {summary && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 20 }}>
           <SummaryCard label="Total Users" value={summary.total_users} />
@@ -164,9 +195,186 @@ export default function IAMCredentials() {
           )}
         </>
       )}
-    </div>
+    </>
   )
 }
+
+// ─── SSO Users Tab ───────────────────────────────────────────────────────────
+
+function SSOUsersTab() {
+  const [data, setData] = useState({ users: [], total: 0 })
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+
+  const fetchData = useCallback(() => {
+    const params = new URLSearchParams()
+    if (search) params.set('search', search)
+    fetch(`/api/sso/users?${params}`)
+      .then(r => r.json())
+      .then(d => { setData(d); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [search])
+
+  useEffect(() => { fetchData() }, [fetchData])
+
+  return (
+    <>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 20 }}>
+        <SummaryCard label="SSO Users" value={data.total} />
+        <SummaryCard label="Enabled" value={data.users.filter(u => u.user_status === 'ENABLED').length} color="var(--success)" />
+        <SummaryCard label="Disabled" value={data.users.filter(u => u.user_status === 'DISABLED').length} color={data.users.some(u => u.user_status === 'DISABLED') ? 'var(--warning, orange)' : 'var(--muted)'} />
+      </div>
+
+      <div className="filter-bar" style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+        <input
+          type="text" placeholder="Search name, username, or email..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{ minWidth: 300 }}
+        />
+      </div>
+
+      {loading ? (
+        <p className="muted">Loading SSO users...</p>
+      ) : data.users.length === 0 ? (
+        <div className="card">
+          <div className="empty-state">
+            <h3>No SSO users</h3>
+            <p>Trigger an SSO Identity sync to pull users from IAM Identity Center.</p>
+          </div>
+        </div>
+      ) : (
+        <div className="table-wrapper">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Username</th>
+                <th>Email</th>
+                <th>Status</th>
+                <th>Groups</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.users.map(u => (
+                <tr key={u.user_id}>
+                  <td style={{ fontWeight: 500 }}>{u.display_name || `${u.given_name || ''} ${u.family_name || ''}`.trim() || u.username}</td>
+                  <td className="mono" style={{ fontSize: 12 }}>{u.username}</td>
+                  <td style={{ fontSize: 13 }}>{u.email || '--'}</td>
+                  <td>
+                    <span className="severity-badge" style={{
+                      color: u.user_status === 'ENABLED' ? 'var(--success)' : 'var(--error)',
+                      borderColor: u.user_status === 'ENABLED' ? 'var(--success)' : 'var(--error)',
+                    }}>
+                      {u.user_status}
+                    </span>
+                  </td>
+                  <td>
+                    {u.groups && u.groups.length > 0 ? (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                        {u.groups.map(g => (
+                          <span key={g.group_id} className="severity-badge" style={{ color: 'var(--accent)', borderColor: 'var(--border)', fontSize: 11 }}>
+                            {g.display_name}
+                          </span>
+                        ))}
+                      </div>
+                    ) : <span className="muted">--</span>}
+                  </td>
+                  <td className="muted" style={{ fontSize: 12 }}>{u.created_at_aws ? new Date(u.created_at_aws).toLocaleDateString() : '--'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
+  )
+}
+
+// ─── SSO Groups Tab ──────────────────────────────────────────────────────────
+
+function SSOGroupsTab() {
+  const [data, setData] = useState({ groups: [], total: 0 })
+  const [loading, setLoading] = useState(true)
+  const [expanded, setExpanded] = useState(null)
+
+  useEffect(() => {
+    fetch('/api/sso/groups')
+      .then(r => r.json())
+      .then(d => { setData(d); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [])
+
+  return (
+    <>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 20 }}>
+        <SummaryCard label="Total Groups" value={data.total} />
+        <SummaryCard label="With Members" value={data.groups.filter(g => g.member_count > 0).length} />
+        <SummaryCard label="Empty Groups" value={data.groups.filter(g => g.member_count == 0).length} color={data.groups.some(g => g.member_count == 0) ? 'var(--warning, orange)' : 'var(--muted)'} />
+      </div>
+
+      {loading ? (
+        <p className="muted">Loading SSO groups...</p>
+      ) : data.groups.length === 0 ? (
+        <div className="card">
+          <div className="empty-state">
+            <h3>No SSO groups</h3>
+            <p>Trigger an SSO Identity sync to pull groups from IAM Identity Center.</p>
+          </div>
+        </div>
+      ) : (
+        <div className="table-wrapper">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Group Name</th>
+                <th>Description</th>
+                <th>Members</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.groups.map(g => (
+                <>
+                  <tr key={g.group_id} onClick={() => setExpanded(expanded === g.group_id ? null : g.group_id)} style={{ cursor: 'pointer' }}>
+                    <td style={{ fontWeight: 500 }}>{g.display_name}</td>
+                    <td className="muted" style={{ fontSize: 13, maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {g.description || '--'}
+                    </td>
+                    <td>
+                      <span style={{ fontWeight: 600, color: g.member_count > 0 ? 'var(--accent)' : 'var(--muted)' }}>
+                        {g.member_count}
+                      </span>
+                    </td>
+                    <td className="muted" style={{ fontSize: 12 }}>{g.created_at_aws ? new Date(g.created_at_aws).toLocaleDateString() : '--'}</td>
+                  </tr>
+                  {expanded === g.group_id && g.members && g.members.length > 0 && (
+                    <tr key={`${g.group_id}-members`}>
+                      <td colSpan="4" style={{ background: 'var(--bg-secondary, #1a1a2e)', padding: 16 }}>
+                        <div style={{ fontSize: 13, marginBottom: 8, fontWeight: 500 }}>Members ({g.members.length})</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 8 }}>
+                          {g.members.map(m => (
+                            <div key={m.user_id} style={{ padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13 }}>
+                              <div style={{ fontWeight: 500 }}>{m.display_name || m.username}</div>
+                              <div className="muted" style={{ fontSize: 11 }}>{m.email || m.username}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
+  )
+}
+
+// ─── Shared Components ───────────────────────────────────────────────────────
 
 function SummaryCard({ label, value, color }) {
   return (
