@@ -1,6 +1,7 @@
 /**
- * Schema migration: runs 001_app_events.sql
- * Used by ECS init container; exits 0 on success
+ * Schema migration: runs all SQL files in migrations/ in sorted order.
+ * Uses a schema_migrations table to track which files have been applied.
+ * Used by ECS init container; exits 0 on success.
  */
 const fs = require('fs');
 const path = require('path');
@@ -28,10 +29,40 @@ async function run() {
   });
 
   await client.connect();
-  const sql = fs.readFileSync(path.join(__dirname, 'migrations', '001_app_events.sql'), 'utf8');
-  await client.query(sql);
+
+  // Create tracking table if it doesn't exist
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      filename VARCHAR(255) PRIMARY KEY,
+      applied_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
+  // Get already-applied migrations
+  const { rows: applied } = await client.query('SELECT filename FROM schema_migrations');
+  const appliedSet = new Set(applied.map((r) => r.filename));
+
+  // Read and sort migration files
+  const migrationsDir = path.join(__dirname, 'migrations');
+  const files = fs.readdirSync(migrationsDir)
+    .filter((f) => f.endsWith('.sql'))
+    .sort();
+
+  let count = 0;
+  for (const file of files) {
+    if (appliedSet.has(file)) {
+      console.log(`  skip: ${file} (already applied)`);
+      continue;
+    }
+    const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
+    console.log(`  apply: ${file}`);
+    await client.query(sql);
+    await client.query('INSERT INTO schema_migrations (filename) VALUES ($1)', [file]);
+    count++;
+  }
+
   await client.end();
-  console.log('Migration complete');
+  console.log(`Migration complete (${count} new, ${files.length} total)`);
   process.exit(0);
 }
 

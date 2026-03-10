@@ -5,12 +5,16 @@
  */
 const express = require('express');
 const { logEvent } = require('./db');
+const accountsRouter = require('./routes/accounts');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const PROXY_TIMEOUT_MS = 5000;
 
 app.use(express.json());
+
+// Health Dashboard routes
+app.use('/api/accounts', accountsRouter);
 
 // ---------------------------------------------------------------------------
 // Reusable proxy: fetches upstream URL with timeout, logs event, returns JSON
