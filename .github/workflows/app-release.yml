@@ -101,10 +101,12 @@ jobs:
           IMAGE_TAG="${{ steps.resolve.outputs.tag }}"
           echo "Deploying frontend with tag: $IMAGE_TAG"
 
-          TASK_DEF=$(aws ecs describe-services \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --services frontend \
-            --query 'services[0].taskDefinition' \
+          # Use the latest registered task def revision (TF always creates a new
+          # revision on apply). Do NOT use describe-services here — that returns
+          # the currently RUNNING revision, which may predate the latest TF apply.
+          TASK_DEF=$(aws ecs describe-task-definition \
+            --task-definition frontend \
+            --query 'taskDefinition.taskDefinitionArn' \
             --output text)
 
           aws ecs describe-task-definition --task-definition "$TASK_DEF" \
@@ -196,10 +198,12 @@ jobs:
           IMAGE_TAG="${{ steps.resolve.outputs.tag }}"
           echo "Deploying backend with tag: $IMAGE_TAG"
 
-          TASK_DEF=$(aws ecs describe-services \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --services backend \
-            --query 'services[0].taskDefinition' \
+          # Use the latest registered task def revision (TF always creates a new
+          # revision on apply). Do NOT use describe-services here — that returns
+          # the currently RUNNING revision, which may predate the latest TF apply.
+          TASK_DEF=$(aws ecs describe-task-definition \
+            --task-definition backend \
+            --query 'taskDefinition.taskDefinitionArn' \
             --output text)
 
           aws ecs describe-task-definition --task-definition "$TASK_DEF" \
