@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { AccountName, useAccountMap, accountOptions } from '../hooks/useAccountMap'
+import { useAccountContext } from '../hooks/useAccountContext'
 
 const COMPLIANCE_COLORS = {
   COMPLIANT: 'var(--success)',
@@ -9,13 +10,16 @@ const COMPLIANCE_COLORS = {
 }
 
 export default function Compliance() {
+  const { selectedAccount: ctxAccount } = useAccountContext()
   const accountMap = useAccountMap()
   const [rules, setRules] = useState([])
   const [total, setTotal] = useState(0)
   const [summary, setSummary] = useState(null)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
-  const [filters, setFilters] = useState({ compliance_type: '', account: '', rule_name: '' })
+  const [filters, setFilters] = useState({ compliance_type: '', account: ctxAccount, rule_name: '' })
+
+  useEffect(() => { setFilters(f => ({ ...f, account: ctxAccount })); setPage(1) }, [ctxAccount])
   const [syncing, setSyncing] = useState(false)
   const limit = 30
 

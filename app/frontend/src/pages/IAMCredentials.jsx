@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { AccountName, useAccountMap, accountOptions } from '../hooks/useAccountMap'
+import { useAccountContext } from '../hooks/useAccountContext'
 
 const KEY_AGE_WARN_DAYS = 90
 
@@ -65,12 +66,15 @@ export default function IAMCredentials() {
 // ─── IAM Users Tab ───────────────────────────────────────────────────────────
 
 function IAMUsersTab() {
+  const { selectedAccount: ctxAccount } = useAccountContext()
   const [data, setData] = useState({ credentials: [], total: 0 })
   const [summary, setSummary] = useState(null)
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
-  const [filters, setFilters] = useState({ account: '', mfa: '', key_active: '', search: '' })
+  const [filters, setFilters] = useState({ account: ctxAccount, mfa: '', key_active: '', search: '' })
   const accountMap = useAccountMap()
+
+  useEffect(() => { setFilters(f => ({ ...f, account: ctxAccount })); setPage(1) }, [ctxAccount])
 
   const fetchData = useCallback(() => {
     const params = new URLSearchParams({ page, limit: 50 })

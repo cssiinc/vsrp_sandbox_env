@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAccountMap, AccountName } from '../hooks/useAccountMap'
+import { useAccountContext } from '../hooks/useAccountContext'
 
 const fmt = (n) => {
   if (n == null) return '--'
@@ -42,9 +43,12 @@ export default function Costs() {
   const accountMap = useAccountMap()
   const [services, setServices] = useState([])
   const [accountServices, setAccountServices] = useState([])
+  const { selectedAccount: ctxAccount } = useAccountContext()
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
-  const [selectedAccount, setSelectedAccount] = useState('')
+  const [selectedAccount, setSelectedAccount] = useState(ctxAccount)
+
+  useEffect(() => { setSelectedAccount(ctxAccount) }, [ctxAccount])
   const [expandedService, setExpandedService] = useState(null)
   const [serviceDetail, setServiceDetail] = useState(null)
   const [serviceFilter, setServiceFilter] = useState('')

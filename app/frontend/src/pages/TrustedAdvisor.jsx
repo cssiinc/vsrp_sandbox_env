@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { AccountName, useAccountMap, accountOptions } from '../hooks/useAccountMap'
+import { useAccountContext } from '../hooks/useAccountContext'
 
 const STATUS_COLORS = {
   error: 'var(--error)',
@@ -21,10 +22,13 @@ export default function TrustedAdvisor() {
   const [summary, setSummary] = useState(null)
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
-  const [filters, setFilters] = useState({ account: '', category: '', status: '', search: '' })
+  const { selectedAccount: ctxAccount } = useAccountContext()
+  const [filters, setFilters] = useState({ account: ctxAccount, category: '', status: '', search: '' })
   const [expanded, setExpanded] = useState(null)
   const [detail, setDetail] = useState(null)
   const accountMap = useAccountMap()
+
+  useEffect(() => { setFilters(f => ({ ...f, account: ctxAccount })); setPage(1) }, [ctxAccount])
 
   const fetchData = useCallback(() => {
     const params = new URLSearchParams({ page, limit: 50 })

@@ -1,16 +1,20 @@
 import { useState, useEffect } from 'react'
 import { AccountName, useAccountMap, accountOptions } from '../hooks/useAccountMap'
+import { useAccountContext } from '../hooks/useAccountContext'
 
 const shortType = (t) => t ? t.replace('AWS::', '') : '--'
 
 export default function Inventory() {
+  const { selectedAccount: ctxAccount } = useAccountContext()
   const accountMap = useAccountMap()
   const [resources, setResources] = useState([])
   const [total, setTotal] = useState(0)
   const [summary, setSummary] = useState(null)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
-  const [filters, setFilters] = useState({ resource_type: '', account: '', name: '' })
+  const [filters, setFilters] = useState({ resource_type: '', account: ctxAccount, name: '' })
+
+  useEffect(() => { setFilters(f => ({ ...f, account: ctxAccount })); setPage(1) }, [ctxAccount])
   const [syncing, setSyncing] = useState(false)
   const limit = 30
 

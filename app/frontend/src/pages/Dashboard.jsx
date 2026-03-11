@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAccountContext } from '../hooks/useAccountContext'
 
-const REFRESH_INTERVAL = 60000
+const REFRESH_INTERVAL = 300000 // 5 min — data only changes on sync (every 15m)
 
 function StatCard({ title, value, subtitle, color, borderColor }) {
   return (
