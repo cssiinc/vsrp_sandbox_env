@@ -55,13 +55,19 @@ router.get('/', async (req, res) => {
 router.get('/summary', async (req, res) => {
   try {
     const pool = await getPool();
+    const { account } = req.query;
+    const conditions = ["event_time >= NOW() - INTERVAL '24 hours'"];
+    const params = [];
+    if (account) { conditions.push(`account_id = $${params.length + 1}`); params.push(account); }
+    const where = conditions.map((c, i) => (i === 0 ? `WHERE ${c}` : `AND ${c}`)).join(' ');
     const { rows } = await pool.query(
       `SELECT event_source, COUNT(*) as count
        FROM cloudtrail_events
-       WHERE event_time >= NOW() - INTERVAL '24 hours'
+       ${where}
        GROUP BY event_source
        ORDER BY count DESC
-       LIMIT 10`
+       LIMIT 10`,
+      params
     );
     const total = rows.reduce((sum, r) => sum + parseInt(r.count), 0);
     res.json({ services: rows, total });

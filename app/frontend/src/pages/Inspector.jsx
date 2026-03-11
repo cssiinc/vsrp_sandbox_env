@@ -34,7 +34,7 @@ export default function Inspector() {
 
     Promise.all([
       fetch(`/api/inspector?${params}`).then(r => r.json()),
-      fetch('/api/inspector/summary').then(r => r.json()),
+      fetch(`/api/inspector/summary${filters.account ? `?account=${filters.account}` : ''}`).then(r => r.json()),
     ]).then(([d, s]) => {
       setData(d)
       setSummary(s)

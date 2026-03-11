@@ -41,8 +41,8 @@ export default function Dashboard() {
     Promise.all([
       fetch('/api/accounts').then((r) => r.json()).catch(() => []),
       fetch(`/api/findings/summary${q}`).then((r) => r.json()).catch(() => null),
-      fetch('/api/changes/summary').then((r) => r.json()).catch(() => null),
-      fetch('/api/changes?limit=8').then((r) => r.json()).catch(() => ({ changes: [] })),
+      fetch(`/api/changes/summary${q}`).then((r) => r.json()).catch(() => null),
+      fetch(`/api/changes?limit=8${selectedAccount ? `&account=${selectedAccount}` : ''}`).then((r) => r.json()).catch(() => ({ changes: [] })),
       fetch('/api/sync/status').then((r) => r.json()).catch(() => null),
       fetch(`/api/inventory/summary${q}`).then((r) => r.json()).catch(() => null),
       fetch(`/api/costs/summary${q}`).then((r) => r.json()).catch(() => null),

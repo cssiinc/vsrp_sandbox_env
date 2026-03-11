@@ -39,7 +39,7 @@ export default function TrustedAdvisor() {
 
     Promise.all([
       fetch(`/api/trusted-advisor?${params}`).then(r => r.json()),
-      fetch('/api/trusted-advisor/summary').then(r => r.json()),
+      fetch(`/api/trusted-advisor/summary${filters.account ? `?account=${filters.account}` : ''}`).then(r => r.json()),
     ]).then(([d, s]) => {
       setData(d)
       setSummary(s)

@@ -30,7 +30,7 @@ export default function GuardDuty() {
 
     Promise.all([
       fetch(`/api/guardduty?${params}`).then(r => r.json()),
-      fetch('/api/guardduty/summary').then(r => r.json()),
+      fetch(`/api/guardduty/summary${filters.account ? `?account=${filters.account}` : ''}`).then(r => r.json()),
     ]).then(([d, s]) => {
       setData(d)
       setSummary(s)
