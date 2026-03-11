@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useAccountContext } from '../hooks/useAccountContext'
 
-const REFRESH_INTERVAL = 60000 // 60 seconds
+const REFRESH_INTERVAL = 60000
 
 function StatCard({ title, value, subtitle, color, borderColor }) {
   return (
@@ -12,7 +13,16 @@ function StatCard({ title, value, subtitle, color, borderColor }) {
   )
 }
 
+function SectionLabel({ children }) {
+  return (
+    <div style={{ marginBottom: 6, fontSize: 11, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--muted)', textTransform: 'uppercase' }}>
+      {children}
+    </div>
+  )
+}
+
 export default function Dashboard() {
+  const { selectedAccount } = useAccountContext()
   const [accounts, setAccounts] = useState([])
   const [findingSummary, setFindingSummary] = useState(null)
   const [changesSummary, setChangesSummary] = useState(null)
@@ -20,24 +30,26 @@ export default function Dashboard() {
   const [syncStatus, setSyncStatus] = useState(null)
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
-
   const [inventorySummary, setInventorySummary] = useState(null)
   const [costSummary, setCostSummary] = useState(null)
   const [complianceSummary, setComplianceSummary] = useState(null)
   const [healthSummary, setHealthSummary] = useState(null)
+  const [dashSummary, setDashSummary] = useState(null)
 
   const fetchAll = useCallback(() => {
+    const q = selectedAccount ? `?account=${selectedAccount}` : ''
     Promise.all([
       fetch('/api/accounts').then((r) => r.json()).catch(() => []),
-      fetch('/api/findings/summary').then((r) => r.json()).catch(() => null),
+      fetch(`/api/findings/summary${q}`).then((r) => r.json()).catch(() => null),
       fetch('/api/changes/summary').then((r) => r.json()).catch(() => null),
       fetch('/api/changes?limit=8').then((r) => r.json()).catch(() => ({ changes: [] })),
       fetch('/api/sync/status').then((r) => r.json()).catch(() => null),
-      fetch('/api/inventory/summary').then((r) => r.json()).catch(() => null),
-      fetch('/api/costs/summary').then((r) => r.json()).catch(() => null),
-      fetch('/api/compliance/summary').then((r) => r.json()).catch(() => null),
-      fetch('/api/health-events/summary').then((r) => r.json()).catch(() => null),
-    ]).then(([accts, findings, changes, recent, sync, inv, cost, comp, health]) => {
+      fetch(`/api/inventory/summary${q}`).then((r) => r.json()).catch(() => null),
+      fetch(`/api/costs/summary${q}`).then((r) => r.json()).catch(() => null),
+      fetch(`/api/compliance/summary${q}`).then((r) => r.json()).catch(() => null),
+      fetch(`/api/health-events/summary${q}`).then((r) => r.json()).catch(() => null),
+      fetch(`/api/dashboard/summary${q}`).then((r) => r.json()).catch(() => null),
+    ]).then(([accts, findings, changes, recent, sync, inv, cost, comp, health, dash]) => {
       setAccounts(Array.isArray(accts) ? accts : [])
       setFindingSummary(findings)
       setChangesSummary(changes)
@@ -47,9 +59,10 @@ export default function Dashboard() {
       setCostSummary(cost)
       setComplianceSummary(comp)
       setHealthSummary(health)
+      setDashSummary(dash)
       setLoading(false)
     })
-  }, [])
+  }, [selectedAccount])
 
   useEffect(() => {
     fetchAll()
@@ -61,10 +74,7 @@ export default function Dashboard() {
     setSyncing(true)
     try {
       await fetch('/api/sync/all', { method: 'POST' })
-      setTimeout(() => {
-        fetchAll()
-        setSyncing(false)
-      }, 8000)
+      setTimeout(() => { fetchAll(); setSyncing(false) }, 8000)
     } catch {
       setSyncing(false)
     }
@@ -72,15 +82,23 @@ export default function Dashboard() {
 
   const enabled = accounts.filter((a) => a.enabled).length
   const fs = findingSummary || {}
+  const gd = dashSummary?.guardduty || {}
+  const insp = dashSummary?.inspector || {}
+  const iam = dashSummary?.iam || {}
+  const ta = dashSummary?.trusted_advisor || {}
   const shortService = (s) => s ? s.replace('.amazonaws.com', '') : ''
   const lastSync = syncStatus?.syncs?.find((s) => s.status === 'completed')
+  const fmt$ = (v) => v ? `$${parseFloat(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : '$0'
 
   return (
     <div className="page">
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
           <h1>Dashboard</h1>
-          <p className="page-subtitle">Multi-account health overview across your AWS organization</p>
+          <p className="page-subtitle">
+            Multi-account health overview across your AWS organization
+            {selectedAccount && <span style={{ color: 'var(--accent)', marginLeft: 8 }}>— account filtered</span>}
+          </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {lastSync && (
@@ -94,38 +112,13 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="stat-grid">
+      <SectionLabel>Infrastructure</SectionLabel>
+      <div className="stat-grid" style={{ marginBottom: 24 }}>
         <StatCard
           title="Monitored Accounts"
           value={loading ? '--' : accounts.length}
           subtitle={loading ? '' : `${enabled} active`}
           borderColor="var(--accent)"
-        />
-        <StatCard
-          title="Critical Findings"
-          value={fs.CRITICAL ?? '--'}
-          subtitle={fs.total != null ? `of ${fs.total} total` : 'Sync to populate'}
-          borderColor="var(--error)"
-          color={fs.CRITICAL > 0 ? 'var(--error)' : undefined}
-        />
-        <StatCard
-          title="High Findings"
-          value={fs.HIGH ?? '--'}
-          subtitle={fs.total != null ? `of ${fs.total} total` : 'Sync to populate'}
-          borderColor="var(--warning)"
-          color={fs.HIGH > 0 ? 'var(--warning)' : undefined}
-        />
-        <StatCard
-          title="Medium Findings"
-          value={fs.MEDIUM ?? '--'}
-          subtitle={fs.total != null ? `of ${fs.total} total` : 'Sync to populate'}
-          borderColor="#f59e0b"
-        />
-        <StatCard
-          title="Change Events (24h)"
-          value={changesSummary?.total ?? '--'}
-          subtitle={changesSummary ? `across ${changesSummary.services?.length || 0} services` : 'Sync to populate'}
-          borderColor="var(--muted)"
         />
         <StatCard
           title="Resources"
@@ -135,25 +128,83 @@ export default function Dashboard() {
         />
         <StatCard
           title="MTD Spend"
-          value={costSummary?.total != null ? `$${costSummary.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '--'}
+          value={costSummary?.total != null
+            ? `$${costSummary.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+            : '--'}
           subtitle={costSummary?.by_account ? `${costSummary.by_account.length} account(s)` : 'Sync to populate'}
           borderColor="#f59e0b"
+        />
+        <StatCard
+          title="Change Events (24h)"
+          value={changesSummary?.total ?? '--'}
+          subtitle={changesSummary ? `across ${changesSummary.services?.length || 0} services` : 'Sync to populate'}
+          borderColor="var(--muted)"
+        />
+        <StatCard
+          title="Health Events"
+          value={healthSummary?.open ?? '--'}
+          subtitle={healthSummary ? `${healthSummary.upcoming || 0} upcoming · ${healthSummary.total || 0} total` : 'Sync to populate'}
+          borderColor={healthSummary?.open > 0 ? 'var(--error)' : 'var(--muted)'}
+          color={healthSummary?.open > 0 ? 'var(--error)' : undefined}
+        />
+      </div>
+
+      <SectionLabel>Security Posture</SectionLabel>
+      <div className="stat-grid" style={{ marginBottom: 24 }}>
+        <StatCard
+          title="Critical Findings"
+          value={fs.CRITICAL ?? '--'}
+          subtitle={fs.total != null ? `of ${fs.total} Security Hub` : 'Sync to populate'}
+          borderColor="var(--error)"
+          color={(fs.CRITICAL || 0) > 0 ? 'var(--error)' : undefined}
+        />
+        <StatCard
+          title="High Findings"
+          value={fs.HIGH ?? '--'}
+          subtitle={fs.total != null ? `of ${fs.total} Security Hub` : 'Sync to populate'}
+          borderColor="var(--warning)"
+          color={(fs.HIGH || 0) > 0 ? 'var(--warning)' : undefined}
+        />
+        <StatCard
+          title="GuardDuty HIGH"
+          value={gd.HIGH ?? '--'}
+          subtitle={gd.total != null ? `${gd.MEDIUM || 0} medium · ${gd.total} total` : 'Sync to populate'}
+          borderColor={(gd.HIGH || 0) > 0 ? 'var(--error)' : 'var(--muted)'}
+          color={(gd.HIGH || 0) > 0 ? 'var(--error)' : undefined}
+        />
+        <StatCard
+          title="Inspector Critical"
+          value={insp.critical ?? '--'}
+          subtitle={insp.total != null ? `${insp.exploitable || 0} exploitable · ${insp.total} total` : 'Sync to populate'}
+          borderColor={(parseInt(insp.critical) || 0) > 0 ? 'var(--error)' : 'var(--muted)'}
+          color={(parseInt(insp.critical) || 0) > 0 ? 'var(--error)' : undefined}
+        />
+        <StatCard
+          title="IAM No-MFA"
+          value={iam.no_mfa ?? '--'}
+          subtitle={iam.total_users != null ? `${iam.stale_keys || 0} stale keys · ${iam.total_users} users` : 'Sync to populate'}
+          borderColor={(parseInt(iam.no_mfa) || 0) > 0 ? 'var(--warning)' : 'var(--muted)'}
+          color={(parseInt(iam.no_mfa) || 0) > 0 ? 'var(--warning)' : undefined}
         />
         <StatCard
           title="Compliance"
           value={complianceSummary?.summary?.COMPLIANT != null
             ? `${Math.round((complianceSummary.summary.COMPLIANT / Math.max(1, Object.values(complianceSummary.summary).reduce((a, b) => a + b, 0))) * 100)}%`
             : '--'}
-          subtitle={complianceSummary?.summary?.NON_COMPLIANT ? `${complianceSummary.summary.NON_COMPLIANT} non-compliant` : 'Sync to populate'}
+          subtitle={complianceSummary?.summary?.NON_COMPLIANT
+            ? `${complianceSummary.summary.NON_COMPLIANT} non-compliant`
+            : 'Sync to populate'}
           borderColor="var(--success)"
           color={complianceSummary?.summary?.NON_COMPLIANT > 0 ? 'var(--warning)' : 'var(--success)'}
         />
         <StatCard
-          title="Health Events"
-          value={healthSummary?.open ?? '--'}
-          subtitle={healthSummary ? `${healthSummary.upcoming || 0} upcoming, ${healthSummary.total || 0} total` : 'Sync to populate'}
-          borderColor={healthSummary?.open > 0 ? 'var(--error)' : 'var(--muted)'}
-          color={healthSummary?.open > 0 ? 'var(--error)' : undefined}
+          title="Trusted Advisor"
+          value={ta.errors ?? '--'}
+          subtitle={ta.warnings != null
+            ? `${ta.warnings} warnings · ${fmt$(ta.total_savings)}/mo savings`
+            : 'Sync to populate'}
+          borderColor={(parseInt(ta.errors) || 0) > 0 ? 'var(--error)' : 'var(--muted)'}
+          color={(parseInt(ta.errors) || 0) > 0 ? 'var(--error)' : undefined}
         />
       </div>
 
@@ -239,7 +290,7 @@ export default function Dashboard() {
               <span className="step-num">3</span>
               <div>
                 <strong>Data syncs automatically</strong>
-                <p>The backend syncs Security Hub and CloudTrail every 15 minutes. Or click "Sync Now" on any page.</p>
+                <p>The backend syncs all modules every 15 minutes. Or click Sync Now to run immediately.</p>
               </div>
             </div>
           </div>

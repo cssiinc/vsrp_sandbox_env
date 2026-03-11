@@ -26,7 +26,8 @@ router.get('/', async (req, res) => {
     if (search) { conditions.push(`(iam_user ILIKE $${idx} OR arn ILIKE $${idx})`); params.push(`%${search}%`); idx++; }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-    const offset = (Math.max(1, parseInt(page)) - 1) * parseInt(limit);
+    const safeLimit = Math.min(200, Math.max(1, parseInt(limit) || 50));
+    const offset = (Math.max(1, parseInt(page)) - 1) * safeLimit;
 
     const [countResult, dataResult] = await Promise.all([
       pool.query(`SELECT COUNT(*) FROM iam_credentials ${where}`, params),
@@ -41,7 +42,7 @@ router.get('/', async (req, res) => {
          FROM iam_credentials ${where}
          ORDER BY mfa_active ASC, iam_user ASC
          LIMIT $${idx++} OFFSET $${idx++}`,
-        [...params, parseInt(limit), offset]
+        [...params, safeLimit, offset]
       ),
     ]);
 

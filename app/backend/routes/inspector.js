@@ -26,7 +26,8 @@ router.get('/', async (req, res) => {
     if (search) { conditions.push(`(title ILIKE $${idx} OR vuln_id ILIKE $${idx} OR package_name ILIKE $${idx})`); params.push(`%${search}%`); idx++; }
 
     const where = `WHERE ${conditions.join(' AND ')}`;
-    const offset = (Math.max(1, parseInt(page)) - 1) * parseInt(limit);
+    const safeLimit = Math.min(200, Math.max(1, parseInt(limit) || 50));
+    const offset = (Math.max(1, parseInt(page)) - 1) * safeLimit;
 
     const [countResult, dataResult] = await Promise.all([
       pool.query(`SELECT COUNT(*) FROM inspector_findings ${where}`, params),
@@ -40,7 +41,7 @@ router.get('/', async (req, res) => {
            CASE severity WHEN 'CRITICAL' THEN 1 WHEN 'HIGH' THEN 2 WHEN 'MEDIUM' THEN 3 ELSE 4 END,
            inspector_score DESC
          LIMIT $${idx++} OFFSET $${idx++}`,
-        [...params, parseInt(limit), offset]
+        [...params, safeLimit, offset]
       ),
     ]);
 

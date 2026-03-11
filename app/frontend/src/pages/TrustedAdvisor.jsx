@@ -175,9 +175,9 @@ export default function TrustedAdvisor() {
                       <tr key={`${c.id}-detail`}>
                         <td colSpan="7" style={{ background: 'var(--bg-secondary, #1a1a2e)', padding: 16 }}>
                           {detail.description && (
-                            <div style={{ marginBottom: 10, fontSize: 13, lineHeight: 1.5 }}
-                              dangerouslySetInnerHTML={{ __html: detail.description }}
-                            />
+                            <div style={{ marginBottom: 10, fontSize: 13, lineHeight: 1.5 }}>
+                              {detail.description}
+                            </div>
                           )}
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 10 }}>
                             <MiniStat label="Processed" value={detail.resources_processed} />
