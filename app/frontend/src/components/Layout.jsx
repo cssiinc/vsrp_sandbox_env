@@ -88,7 +88,7 @@ export default function Layout() {
             >
               <option value="">All Accounts</option>
               {options.map(o => (
-                <option key={o.value} value={o.value}>{o.label}</option>
+                <option key={o.id} value={o.id}>{o.label}</option>
               ))}
             </select>
           </div>
