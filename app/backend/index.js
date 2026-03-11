@@ -20,6 +20,7 @@ const guarddutyRouter = require('./routes/guardduty');
 const trustedAdvisorRouter = require('./routes/trusted-advisor');
 const inspectorRouter = require('./routes/inspector');
 const ssoIdentityRouter = require('./routes/sso-identity');
+const appMetricsRouter = require('./routes/app-metrics');
 const dashboardRouter = require('./routes/dashboard');
 
 const app = express();
@@ -45,6 +46,7 @@ app.use('/api/guardduty', guarddutyRouter);
 app.use('/api/trusted-advisor', trustedAdvisorRouter);
 app.use('/api/inspector', inspectorRouter);
 app.use('/api/sso', ssoIdentityRouter);
+app.use('/api/app-metrics', appMetricsRouter);
 app.use('/api/dashboard', dashboardRouter);
 
 // ---------------------------------------------------------------------------

@@ -18,9 +18,17 @@ function StatusDot({ ok }) {
   )
 }
 
+function RolloutBadge({ state }) {
+  if (!state) return null
+  const color = state === 'COMPLETED' ? 'var(--success)' : state === 'FAILED' ? 'var(--error)' : 'var(--warning)'
+  return <span style={{ fontSize: 11, color, fontWeight: 600, marginLeft: 6 }}>{state}</span>
+}
+
 export default function OpsHealth() {
   const [data, setData] = useState(null)
+  const [appData, setAppData] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [appLoading, setAppLoading] = useState(true)
 
   const fetchHealth = useCallback(() => {
     fetch('/api/ops-health')
@@ -29,11 +37,20 @@ export default function OpsHealth() {
       .catch(() => setLoading(false))
   }, [])
 
+  const fetchAppMetrics = useCallback(() => {
+    fetch('/api/app-metrics')
+      .then(r => r.json())
+      .then(d => { setAppData(d); setAppLoading(false) })
+      .catch(() => setAppLoading(false))
+  }, [])
+
   useEffect(() => {
     fetchHealth()
+    fetchAppMetrics()
     const interval = setInterval(fetchHealth, 30000)
-    return () => clearInterval(interval)
-  }, [fetchHealth])
+    const appInterval = setInterval(fetchAppMetrics, 60000)
+    return () => { clearInterval(interval); clearInterval(appInterval) }
+  }, [fetchHealth, fetchAppMetrics])
 
   if (loading) return <div className="page"><p className="muted">Loading operational health...</p></div>
   if (!data) return <div className="page"><p className="muted">Failed to load operational health data.</p></div>
@@ -42,12 +59,175 @@ export default function OpsHealth() {
   const maxRows = Math.max(...data.tables.map(t => t.rows), 1)
   const maxSize = Math.max(...data.tables.map(t => t.total_bytes), 1)
 
+  // ECS service helpers
+  const ecsServices = appData?.ecs ? Object.entries(appData.ecs) : []
+  const allServicesHealthy = ecsServices.length > 0 && ecsServices.every(([, s]) => s.running > 0 && s.running === s.desired)
+
   return (
     <div className="page">
       <div className="page-header">
         <h1>Operational Health</h1>
-        <p className="page-subtitle">Database, sync performance, and data growth monitoring</p>
+        <p className="page-subtitle">Application infrastructure, database, and sync performance monitoring</p>
       </div>
+
+      {/* ------------------------------------------------------------------ */}
+      {/* APPLICATION INFRASTRUCTURE                                          */}
+      {/* ------------------------------------------------------------------ */}
+      <h2 style={{ fontSize: 14, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 12px' }}>
+        Application Infrastructure
+      </h2>
+
+      {appLoading ? (
+        <p className="muted" style={{ marginBottom: 16 }}>Loading infrastructure metrics...</p>
+      ) : !appData?.configured ? (
+        <div className="card" style={{ marginBottom: 16, padding: '16px 20px', color: 'var(--muted)', fontSize: 13 }}>
+          Infrastructure monitoring not configured. Set <code>APP_ACCOUNT_ID</code>, <code>ECS_CLUSTER</code>,{' '}
+          <code>BACKEND_SERVICE</code>, <code>FRONTEND_SERVICE</code>, <code>RDS_INSTANCE_ID</code>, and{' '}
+          <code>ALB_NAME</code> environment variables on the backend container.
+        </div>
+      ) : (
+        <>
+          {/* ECS Services */}
+          <div className="stat-grid" style={{ marginBottom: 12 }}>
+            {ecsServices.map(([name, svc]) => {
+              const healthy = !svc.error && svc.running > 0 && svc.running === svc.desired
+              return (
+                <div key={name} className="stat-card" style={{ borderTop: `3px solid ${healthy ? 'var(--success)' : 'var(--error)'}` }}>
+                  <p className="stat-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <StatusDot ok={healthy} />
+                    {name}
+                  </p>
+                  {svc.error ? (
+                    <p className="stat-value" style={{ color: 'var(--error)', fontSize: 13 }}>{svc.error}</p>
+                  ) : (
+                    <>
+                      <p className="stat-value">{svc.running}/{svc.desired}</p>
+                      <p className="stat-subtitle">
+                        running/desired{svc.pending > 0 ? ` · ${svc.pending} pending` : ''}
+                        <RolloutBadge state={svc.rollout_state} />
+                      </p>
+                      {svc.task_definition && (
+                        <p style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4, fontFamily: 'monospace' }}>{svc.task_definition}</p>
+                      )}
+                    </>
+                  )}
+                </div>
+              )
+            })}
+
+            {/* RDS stat card */}
+            {appData.rds && (
+              <div className="stat-card" style={{ borderTop: `3px solid ${appData.rds.status === 'available' ? 'var(--success)' : 'var(--warning)'}` }}>
+                <p className="stat-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <StatusDot ok={appData.rds.status === 'available'} />
+                  RDS
+                </p>
+                <p className="stat-value">{appData.rds.cpu_percent != null ? `${appData.rds.cpu_percent}%` : appData.rds.status}</p>
+                <p className="stat-subtitle">
+                  {appData.rds.cpu_percent != null ? 'CPU' : appData.rds.instance_class}
+                  {appData.rds.connections != null ? ` · ${appData.rds.connections} conn` : ''}
+                </p>
+              </div>
+            )}
+
+            {/* ALB stat card */}
+            {appData.alb && (
+              <div className="stat-card" style={{ borderTop: `3px solid ${appData.alb.state === 'active' ? 'var(--success)' : 'var(--warning)'}` }}>
+                <p className="stat-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <StatusDot ok={appData.alb.state === 'active'} />
+                  ALB
+                </p>
+                <p className="stat-value">{appData.alb.requests_5min != null ? appData.alb.requests_5min.toLocaleString() : appData.alb.state}</p>
+                <p className="stat-subtitle">
+                  {appData.alb.requests_5min != null ? 'requests (5m)' : ''}
+                  {appData.alb.errors_5xx > 0 ? ` · ${appData.alb.errors_5xx} 5xx` : ''}
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* RDS + ALB detail cards */}
+          <div className="dashboard-grid" style={{ marginBottom: 12 }}>
+            {appData.rds && (
+              <div className="card">
+                <div className="card-header">
+                  <h3>RDS Database</h3>
+                  <span className="card-badge" style={{ color: appData.rds.status === 'available' ? 'var(--success)' : 'var(--warning)' }}>
+                    {appData.rds.status}
+                  </span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 24px', padding: '4px 0', fontSize: 13 }}>
+                  <div><span style={{ color: 'var(--muted)' }}>Instance class</span><br /><strong>{appData.rds.instance_class}</strong></div>
+                  <div><span style={{ color: 'var(--muted)' }}>Engine</span><br /><strong>{appData.rds.engine} {appData.rds.engine_version}</strong></div>
+                  <div><span style={{ color: 'var(--muted)' }}>CPU</span><br /><strong>{appData.rds.cpu_percent != null ? `${appData.rds.cpu_percent}%` : '--'}</strong></div>
+                  <div><span style={{ color: 'var(--muted)' }}>Free storage</span><br /><strong>{appData.rds.free_storage_gb != null ? `${appData.rds.free_storage_gb} GB` : `${appData.rds.allocated_storage_gb} GB alloc`}</strong></div>
+                  <div><span style={{ color: 'var(--muted)' }}>Connections</span><br /><strong>{appData.rds.connections ?? '--'}</strong></div>
+                  <div><span style={{ color: 'var(--muted)' }}>IOPS (R/W)</span><br /><strong>{appData.rds.read_iops ?? '--'} / {appData.rds.write_iops ?? '--'}</strong></div>
+                  <div><span style={{ color: 'var(--muted)' }}>Multi-AZ</span><br /><strong>{appData.rds.multi_az ? 'Yes' : 'No'}</strong></div>
+                  <div><span style={{ color: 'var(--muted)' }}>Backup retention</span><br /><strong>{appData.rds.backup_retention_days != null ? `${appData.rds.backup_retention_days} days` : '--'}</strong></div>
+                </div>
+              </div>
+            )}
+
+            {appData.alb && (
+              <div className="card">
+                <div className="card-header">
+                  <h3>Load Balancer</h3>
+                  <span className="card-badge" style={{ color: appData.alb.state === 'active' ? 'var(--success)' : 'var(--warning)' }}>
+                    {appData.alb.state}
+                  </span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 24px', padding: '4px 0 12px', fontSize: 13 }}>
+                  <div><span style={{ color: 'var(--muted)' }}>Requests (5m)</span><br /><strong>{appData.alb.requests_5min?.toLocaleString() ?? '--'}</strong></div>
+                  <div><span style={{ color: 'var(--muted)' }}>5xx errors (5m)</span><br /><strong style={{ color: appData.alb.errors_5xx > 0 ? 'var(--error)' : undefined }}>{appData.alb.errors_5xx ?? '--'}</strong></div>
+                  <div><span style={{ color: 'var(--muted)' }}>Avg response</span><br /><strong>{appData.alb.avg_response_ms != null ? `${appData.alb.avg_response_ms}ms` : '--'}</strong></div>
+                  <div><span style={{ color: 'var(--muted)' }}>Name</span><br /><strong>{appData.alb.name}</strong></div>
+                </div>
+                {appData.alb.target_groups?.length > 0 && (
+                  <>
+                    <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted)', marginBottom: 8 }}>TARGET GROUPS</p>
+                    {appData.alb.target_groups.map(tg => (
+                      <div key={tg.name} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, fontSize: 13 }}>
+                        <StatusDot ok={tg.healthy === tg.total && tg.total > 0} />
+                        <span style={{ flex: 1 }}>{tg.name}</span>
+                        <span style={{ color: tg.healthy === tg.total ? 'var(--success)' : 'var(--error)' }}>
+                          {tg.healthy}/{tg.total} healthy
+                        </span>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Last event log per ECS service */}
+          {ecsServices.some(([, s]) => s.last_event) && (
+            <div className="card" style={{ marginBottom: 12 }}>
+              <div className="card-header">
+                <h3>Recent Service Events</h3>
+                <span className="card-badge">ECS</span>
+              </div>
+              {ecsServices.filter(([, s]) => s.last_event).map(([name, svc]) => (
+                <div key={name} style={{ display: 'flex', gap: 12, padding: '8px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                  <span style={{ fontWeight: 600, minWidth: 100, color: 'var(--text)' }}>{name}</span>
+                  <span style={{ color: 'var(--muted)' }}>
+                    {svc.last_event_time ? new Date(svc.last_event_time).toLocaleString() : ''}
+                  </span>
+                  <span style={{ flex: 1 }}>{svc.last_event}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ------------------------------------------------------------------ */}
+      {/* DATABASE                                                            */}
+      {/* ------------------------------------------------------------------ */}
+      <h2 style={{ fontSize: 14, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '16px 0 12px' }}>
+        Database (CloudOps Store)
+      </h2>
 
       {/* Database overview */}
       <div className="stat-grid">
@@ -120,8 +300,14 @@ export default function OpsHealth() {
         </div>
       </div>
 
-      {/* Sync performance */}
-      <div className="card" style={{ marginTop: 12 }}>
+      {/* ------------------------------------------------------------------ */}
+      {/* SYNC PERFORMANCE                                                    */}
+      {/* ------------------------------------------------------------------ */}
+      <h2 style={{ fontSize: 14, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '24px 0 12px' }}>
+        Sync Performance
+      </h2>
+
+      <div className="card">
         <div className="card-header">
           <h3>Sync Performance (24h)</h3>
           <span className="card-badge">Background Scheduler</span>

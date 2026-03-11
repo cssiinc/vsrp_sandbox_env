@@ -21,6 +21,10 @@
     "@aws-sdk/client-guardduty": "^3.450.0",
     "@aws-sdk/client-support": "^3.450.0",
     "@aws-sdk/client-inspector2": "^3.450.0",
-    "@aws-sdk/client-identitystore": "^3.450.0"
+    "@aws-sdk/client-identitystore": "^3.450.0",
+    "@aws-sdk/client-ecs": "^3.450.0",
+    "@aws-sdk/client-rds": "^3.450.0",
+    "@aws-sdk/client-elastic-load-balancing-v2": "^3.450.0",
+    "@aws-sdk/client-cloudwatch": "^3.450.0"
   }
 }
