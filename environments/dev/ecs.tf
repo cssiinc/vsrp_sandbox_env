@@ -219,6 +219,31 @@ module "ecs" {
             {
               name  = "DB_NAME"
               value = local.db_name
+            },
+            # App infrastructure monitoring (app-metrics route)
+            {
+              name  = "APP_ACCOUNT_ID"
+              value = data.aws_caller_identity.current.account_id
+            },
+            {
+              name  = "ECS_CLUSTER"
+              value = "${var.project}-${var.environment}"
+            },
+            {
+              name  = "BACKEND_SERVICE"
+              value = "backend"
+            },
+            {
+              name  = "FRONTEND_SERVICE"
+              value = "frontend"
+            },
+            {
+              name  = "RDS_INSTANCE_ID"
+              value = module.rds.db_instance_identifier
+            },
+            {
+              name  = "ALB_NAME"
+              value = "${var.project}-${var.environment}"
             }
           ]
           logConfiguration = {

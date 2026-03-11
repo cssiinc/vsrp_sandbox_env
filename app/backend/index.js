@@ -20,6 +20,7 @@ const guarddutyRouter = require('./routes/guardduty');
 const trustedAdvisorRouter = require('./routes/trusted-advisor');
 const inspectorRouter = require('./routes/inspector');
 const ssoIdentityRouter = require('./routes/sso-identity');
+const appMetricsRouter = require('./routes/app-metrics');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -44,6 +45,7 @@ app.use('/api/guardduty', guarddutyRouter);
 app.use('/api/trusted-advisor', trustedAdvisorRouter);
 app.use('/api/inspector', inspectorRouter);
 app.use('/api/sso', ssoIdentityRouter);
+app.use('/api/app-metrics', appMetricsRouter);
 
 // ---------------------------------------------------------------------------
 // Reusable proxy: fetches upstream URL with timeout, logs event, returns JSON
