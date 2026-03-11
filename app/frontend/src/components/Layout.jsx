@@ -1,4 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom'
+import { useAccountContext } from '../hooks/useAccountContext'
+import { useAccountMap, accountOptions } from '../hooks/useAccountMap'
 
 const MONITOR_ITEMS = [
   { to: '/', label: 'Dashboard', icon: 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1', end: true },
@@ -8,9 +10,12 @@ const MONITOR_ITEMS = [
 const SECURITY_ITEMS = [
   { to: '/findings', label: 'Findings', icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z' },
   { to: '/guardduty', label: 'GuardDuty', icon: 'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z' },
-  { to: '/iam', label: 'IAM Credentials', icon: 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z' },
+  { to: '/iam', label: 'Identity & Access', icon: 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z' },
   { to: '/inspector', label: 'Inspector', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7' },
   { to: '/compliance', label: 'Compliance', icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
+]
+
+const AUDIT_ITEMS = [
   { to: '/changes', label: 'Change Log', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' },
   { to: '/logs', label: 'Log Explorer', icon: 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8zM14 2v6h6M16 13H8M16 17H8M10 9H8' },
 ]
@@ -49,6 +54,10 @@ function NavItem({ to, label, icon, end }) {
 }
 
 export default function Layout() {
+  const { selectedAccount, setAccount } = useAccountContext()
+  const accountMap = useAccountMap()
+  const options = accountOptions(accountMap)
+
   return (
     <div className="layout">
       <aside className="sidebar">
@@ -69,6 +78,22 @@ export default function Layout() {
           </div>
         </div>
 
+        {options.length > 0 && (
+          <div style={{ padding: '0 12px 12px' }}>
+            <select
+              value={selectedAccount}
+              onChange={e => setAccount(e.target.value)}
+              style={{ width: '100%', fontSize: 12 }}
+              title="Filter all pages by account"
+            >
+              <option value="">All Accounts</option>
+              {options.map(o => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
         <div className="nav-section-label">Monitor</div>
         <nav className="sidebar-nav">
           {MONITOR_ITEMS.map((item) => (
@@ -79,6 +104,13 @@ export default function Layout() {
         <div className="nav-section-label">Security</div>
         <nav className="sidebar-nav">
           {SECURITY_ITEMS.map((item) => (
+            <NavItem key={item.to} {...item} />
+          ))}
+        </nav>
+
+        <div className="nav-section-label">Audit</div>
+        <nav className="sidebar-nav">
+          {AUDIT_ITEMS.map((item) => (
             <NavItem key={item.to} {...item} />
           ))}
         </nav>

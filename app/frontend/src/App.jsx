@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { AccountProvider } from './hooks/useAccountContext'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import Accounts from './pages/Accounts'
@@ -18,6 +19,7 @@ import Inspector from './pages/Inspector'
 
 export default function App() {
   return (
+    <AccountProvider>
     <BrowserRouter>
       <Routes>
         <Route element={<Layout />}>
@@ -39,5 +41,6 @@ export default function App() {
         </Route>
       </Routes>
     </BrowserRouter>
+    </AccountProvider>
   )
 }

@@ -16,7 +16,12 @@ async function getDbConfig() {
 
   const client = new SecretsManagerClient({ region: process.env.AWS_REGION || 'us-east-1' });
   const response = await client.send(new GetSecretValueCommand({ SecretId: secretArn }));
-  const secret = JSON.parse(response.SecretString);
+  let secret;
+  try {
+    secret = JSON.parse(response.SecretString);
+  } catch {
+    throw new Error('DB_SECRET_ARN secret is not valid JSON');
+  }
 
   return {
     host: process.env.DB_HOST,
@@ -27,6 +32,7 @@ async function getDbConfig() {
     ssl: { rejectUnauthorized: false },
     max: 10,
     idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 5000,
   };
 }
 

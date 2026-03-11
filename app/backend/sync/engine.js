@@ -96,6 +96,8 @@ async function touchAccount(accountId) {
 async function runSyncForAllAccounts(moduleName, workerFn) {
   const accounts = await getEnabledAccounts();
   const pool = await getPool();
+  // Prune sync history older than 30 days to prevent unbounded growth
+  await pool.query("DELETE FROM sync_status WHERE completed_at < NOW() - INTERVAL '30 days'").catch(() => {});
   const results = { total: 0, succeeded: 0, failed: 0, accounts: [] };
 
   for (const account of accounts) {
