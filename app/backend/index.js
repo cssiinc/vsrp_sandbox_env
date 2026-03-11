@@ -21,6 +21,7 @@ const trustedAdvisorRouter = require('./routes/trusted-advisor');
 const inspectorRouter = require('./routes/inspector');
 const ssoIdentityRouter = require('./routes/sso-identity');
 const appMetricsRouter = require('./routes/app-metrics');
+const dashboardRouter = require('./routes/dashboard');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -46,6 +47,7 @@ app.use('/api/trusted-advisor', trustedAdvisorRouter);
 app.use('/api/inspector', inspectorRouter);
 app.use('/api/sso', ssoIdentityRouter);
 app.use('/api/app-metrics', appMetricsRouter);
+app.use('/api/dashboard', dashboardRouter);
 
 // ---------------------------------------------------------------------------
 // Reusable proxy: fetches upstream URL with timeout, logs event, returns JSON

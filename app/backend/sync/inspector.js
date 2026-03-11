@@ -85,7 +85,7 @@ async function syncAccount(credentials, account, pool) {
         );
         totalUpserted++;
       } catch (dbErr) {
-        if (!dbErr.message.includes('duplicate key')) {
+        if (dbErr.code !== '23505') {
           console.warn(`[inspector] Insert error: ${dbErr.message}`);
         }
       }

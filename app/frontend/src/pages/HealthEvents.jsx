@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { AccountName, useAccountMap, accountOptions } from '../hooks/useAccountMap'
+import { useAccountContext } from '../hooks/useAccountContext'
 
 const STATUS_COLORS = {
   open: 'var(--error)',
@@ -14,13 +15,16 @@ const CATEGORY_LABELS = {
 }
 
 export default function HealthEvents() {
+  const { selectedAccount: ctxAccount } = useAccountContext()
   const accountMap = useAccountMap()
   const [events, setEvents] = useState([])
   const [total, setTotal] = useState(0)
   const [summary, setSummary] = useState(null)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
-  const [filters, setFilters] = useState({ status: '', service: '', category: '', account: '' })
+  const [filters, setFilters] = useState({ status: '', service: '', category: '', account: ctxAccount })
+
+  useEffect(() => { setFilters(f => ({ ...f, account: ctxAccount })); setPage(1) }, [ctxAccount])
   const [syncing, setSyncing] = useState(false)
   const [expanded, setExpanded] = useState(null)
   const limit = 30

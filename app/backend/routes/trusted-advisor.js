@@ -19,7 +19,8 @@ router.get('/', async (req, res) => {
     if (search) { conditions.push(`(check_name ILIKE $${idx} OR description ILIKE $${idx})`); params.push(`%${search}%`); idx++; }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-    const offset = (Math.max(1, parseInt(page)) - 1) * parseInt(limit);
+    const safeLimit = Math.min(200, Math.max(1, parseInt(limit) || 50));
+    const offset = (Math.max(1, parseInt(page)) - 1) * safeLimit;
 
     const [countResult, dataResult] = await Promise.all([
       pool.query(`SELECT COUNT(*) FROM trusted_advisor_checks ${where}`, params),
@@ -32,7 +33,7 @@ router.get('/', async (req, res) => {
            CASE status WHEN 'error' THEN 1 WHEN 'warning' THEN 2 WHEN 'ok' THEN 3 ELSE 4 END,
            estimated_savings DESC
          LIMIT $${idx++} OFFSET $${idx++}`,
-        [...params, parseInt(limit), offset]
+        [...params, safeLimit, offset]
       ),
     ]);
 

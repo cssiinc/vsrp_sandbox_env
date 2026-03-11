@@ -20,7 +20,8 @@ router.get('/', async (req, res) => {
     if (search) { conditions.push(`(title ILIKE $${idx} OR description ILIKE $${idx} OR type ILIKE $${idx})`); params.push(`%${search}%`); idx++; }
 
     const where = `WHERE ${conditions.join(' AND ')}`;
-    const offset = (Math.max(1, parseInt(page)) - 1) * parseInt(limit);
+    const safeLimit = Math.min(200, Math.max(1, parseInt(limit) || 50));
+    const offset = (Math.max(1, parseInt(page)) - 1) * safeLimit;
 
     const [countResult, dataResult] = await Promise.all([
       pool.query(`SELECT COUNT(*) FROM guardduty_findings ${where}`, params),
@@ -31,7 +32,7 @@ router.get('/', async (req, res) => {
          FROM guardduty_findings ${where}
          ORDER BY severity DESC, last_seen DESC
          LIMIT $${idx++} OFFSET $${idx++}`,
-        [...params, parseInt(limit), offset]
+        [...params, safeLimit, offset]
       ),
     ]);
 

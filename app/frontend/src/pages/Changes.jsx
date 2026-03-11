@@ -1,13 +1,17 @@
 import { useState, useEffect } from 'react'
 import { AccountName, useAccountMap, accountOptions } from '../hooks/useAccountMap'
+import { useAccountContext } from '../hooks/useAccountContext'
 
 export default function Changes() {
+  const { selectedAccount: ctxAccount } = useAccountContext()
   const accountMap = useAccountMap()
   const [changes, setChanges] = useState([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
-  const [filters, setFilters] = useState({ account: '', username: '', service: '', event_name: '' })
+  const [filters, setFilters] = useState({ account: ctxAccount, username: '', service: '', event_name: '' })
+
+  useEffect(() => { setFilters(f => ({ ...f, account: ctxAccount })); setPage(1) }, [ctxAccount])
   const [syncing, setSyncing] = useState(false)
   const limit = 30
 

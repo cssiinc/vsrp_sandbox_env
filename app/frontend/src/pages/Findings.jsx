@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { AccountName, useAccountMap, accountOptions } from '../hooks/useAccountMap'
+import { useAccountContext } from '../hooks/useAccountContext'
 
 const SEVERITY_COLORS = {
   CRITICAL: 'var(--error)',
@@ -10,12 +11,15 @@ const SEVERITY_COLORS = {
 }
 
 export default function Findings() {
+  const { selectedAccount: ctxAccount } = useAccountContext()
   const accountMap = useAccountMap()
   const [findings, setFindings] = useState([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
-  const [filters, setFilters] = useState({ severity: '', source: '', account: '' })
+  const [filters, setFilters] = useState({ severity: '', source: '', account: ctxAccount })
+
+  useEffect(() => { setFilters(f => ({ ...f, account: ctxAccount })); setPage(1) }, [ctxAccount])
   const [syncing, setSyncing] = useState(false)
   const limit = 25
 
