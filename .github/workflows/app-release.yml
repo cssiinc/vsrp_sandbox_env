@@ -212,6 +212,31 @@ jobs:
             jq --arg IMAGE "${{ env.ECR_BACKEND }}:${IMAGE_TAG}" \
               '.containerDefinitions |= map(if (.name == "backend" or .name == "backend-init") then .image = $IMAGE else . end)' > /tmp/taskdef.json
 
+          # Self-healing: upsert monitoring env vars on every release so they are
+          # never lost regardless of which task def revision was cloned. Values are
+          # derived from existing GitHub Actions vars — no extra config needed.
+          jq \
+            --arg account_id "${{ vars.AWS_ACCOUNT_ID }}" \
+            --arg ecs_cluster "${{ env.ECS_CLUSTER }}" \
+            '.containerDefinitions |= map(
+              if .name == "backend" then
+                .environment = (
+                  [(.environment // [])[] | select(.name | IN(
+                    "APP_ACCOUNT_ID","ECS_CLUSTER","BACKEND_SERVICE",
+                    "FRONTEND_SERVICE","RDS_INSTANCE_ID","ALB_NAME"
+                  ) | not)] +
+                  [
+                    {"name": "APP_ACCOUNT_ID",   "value": $account_id},
+                    {"name": "ECS_CLUSTER",       "value": $ecs_cluster},
+                    {"name": "BACKEND_SERVICE",   "value": "backend"},
+                    {"name": "FRONTEND_SERVICE",  "value": "frontend"},
+                    {"name": "RDS_INSTANCE_ID",   "value": $ecs_cluster},
+                    {"name": "ALB_NAME",          "value": $ecs_cluster}
+                  ]
+                )
+              else . end
+            )' /tmp/taskdef.json > /tmp/taskdef-final.json && mv /tmp/taskdef-final.json /tmp/taskdef.json
+
           NEW_TASK_DEF=$(aws ecs register-task-definition \
             --cli-input-json file:///tmp/taskdef.json \
             --query 'taskDefinition.taskDefinitionArn' \
