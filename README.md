@@ -1,3 +1,5 @@
+TEST
+
 # vsrp-sandbox-env: 3-Tier Application on AWS
 
 A **3-tier web application** deployed on AWS using ECS Fargate, RDS PostgreSQL, and an internal Application Load Balancer. Designed for learning and as a reference implementation for containerized, private-only deployments.
