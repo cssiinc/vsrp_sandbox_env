@@ -99,6 +99,8 @@ jobs:
           context: ./app/frontend
           push: true
           tags: ${{ env.ECR_FRONTEND }}:${{ github.sha }}
+          build-args: |
+            REGISTRY=${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION || 'us-east-1' }}.amazonaws.com
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
 
@@ -209,6 +211,8 @@ jobs:
           context: ./app/backend
           push: true
           tags: ${{ env.ECR_BACKEND }}:${{ github.sha }}
+          build-args: |
+            REGISTRY=${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION || 'us-east-1' }}.amazonaws.com
           cache-from: type=gha,scope=backend
           cache-to: type=gha,mode=max,scope=backend
 

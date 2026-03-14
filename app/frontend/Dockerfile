@@ -1,5 +1,8 @@
 # Stage 1: Build SPA
-FROM node:20-alpine AS build
+# REGISTRY is passed by CI as the ECR pull-through cache base URL.
+# Example: 123456789.dkr.ecr.us-east-1.amazonaws.com
+ARG REGISTRY
+FROM ${REGISTRY}/docker-hub/node:20-alpine AS build
 WORKDIR /app
 
 COPY package*.json ./
@@ -9,7 +12,8 @@ COPY . .
 RUN npm run build
 
 # Stage 2: Serve with nginx
-FROM nginx:alpine
+ARG REGISTRY
+FROM ${REGISTRY}/docker-hub/nginx:alpine
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
