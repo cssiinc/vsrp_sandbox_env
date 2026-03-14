@@ -37,7 +37,7 @@ resource "aws_ecr_pull_through_cache_rule" "ecr_public" {
 # Required scopes: Public Repo Read (read:org is not needed)
 # ---------------------------------------------------------------------------
 resource "aws_secretsmanager_secret" "docker_hub" {
-  name                    = "${var.project}/docker-hub-credentials"
+  name                    = "ecr-pullthroughcache/${var.project}-docker-hub-credentials"
   description             = "Docker Hub PAT for ECR pull-through cache (username + accessToken)"
   recovery_window_in_days = 0 # Sandbox: allow immediate deletion
 
