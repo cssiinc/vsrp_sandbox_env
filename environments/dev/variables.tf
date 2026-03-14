@@ -38,6 +38,22 @@ variable "project" {
 }
 
 # -------------------------------------------------------------------------------
+# Docker Hub credentials — set as sensitive variables in TFC workspace
+# -------------------------------------------------------------------------------
+
+variable "docker_hub_username" {
+  description = "Docker Hub username for ECR pull-through cache"
+  type        = string
+  sensitive   = true
+}
+
+variable "docker_hub_access_token" {
+  description = "Docker Hub personal access token (read:public_repo scope) for ECR pull-through cache"
+  type        = string
+  sensitive   = true
+}
+
+# -------------------------------------------------------------------------------
 # No RDS or ALB variables — values in locals (rds.tf, alb.tf)
 # db_name, db_allocated_storage, alb_allowed_cidrs are hardcoded for sandbox.
 # -------------------------------------------------------------------------------
