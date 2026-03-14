@@ -48,6 +48,20 @@ module "ecr" {
     rules = [
       {
         rulePriority = 1
+        description  = "Expire PR scan images after 1 day (vuln-scan.yml ephemeral builds)"
+        selection = {
+          tagStatus     = "tagged"
+          tagPrefixList = ["pr-", "scheduled-"]
+          countType     = "sinceImagePushed"
+          countUnit     = "days"
+          countNumber   = 1
+        }
+        action = {
+          type = "expire"
+        }
+      },
+      {
+        rulePriority = 2
         description  = "Expire untagged images after 7 days"
         selection = {
           tagStatus   = "untagged"
@@ -60,7 +74,7 @@ module "ecr" {
         }
       },
       {
-        rulePriority = 2
+        rulePriority = 3
         description  = "Keep last 10 images"
         selection = {
           tagStatus   = "any"
