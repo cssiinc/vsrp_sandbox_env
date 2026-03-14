@@ -54,8 +54,11 @@ resource "aws_iam_role" "github_actions" {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
         }
         StringLike = {
-          # Only allow main branch pushes to assume this role
-          "token.actions.githubusercontent.com:sub" = "repo:${var.github_repository}:ref:refs/heads/main"
+          # Allow main branch (build/deploy) and pull_request events (vuln-scan.yml)
+          "token.actions.githubusercontent.com:sub" = [
+            "repo:${var.github_repository}:ref:refs/heads/main",
+            "repo:${var.github_repository}:pull_request"
+          ]
         }
       }
     }]
@@ -149,6 +152,32 @@ data "aws_iam_policy_document" "github_actions" {
       module.ecr["frontend"].repository_arn,
       module.ecr["backend"].repository_arn
     ]
+  }
+
+  # Pull-through cache: auto-create cached repos and fetch upstream images
+  # Required for Dockerfiles that use the ECR pull-through cache URL as base image
+  statement {
+    sid    = "ECRPullThroughCache"
+    effect = "Allow"
+    actions = [
+      "ecr:CreateRepository",
+      "ecr:BatchImportUpstreamImage"
+    ]
+    resources = [
+      "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/docker-hub/*",
+      "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/ecr-public/*"
+    ]
+  }
+
+  # Inspector: query scan findings in vuln-scan.yml pipeline
+  # inspector2:ListFindings does not support resource-level restrictions
+  statement {
+    sid    = "InspectorFindings"
+    effect = "Allow"
+    actions = [
+      "inspector2:ListFindings"
+    ]
+    resources = ["*"]
   }
 }
 
