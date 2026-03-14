@@ -118,46 +118,49 @@ jobs:
             exit 1
           fi
 
-      - name: Wait for ECR scan
+      - name: Wait for Inspector scan
         run: |
-          echo "Waiting for ECR scan to complete..."
-          for i in $(seq 1 30); do
-            STATUS=$(aws ecr describe-image-scan-findings \
+          # With Inspector enhanced scanning, status is ACTIVE (not COMPLETE).
+          # ecr describe-image-scan-findings is basic-scan only — use describe-images instead.
+          echo "Waiting for Inspector enhanced scan..."
+          for i in $(seq 1 24); do
+            STATUS=$(aws ecr describe-images \
               --repository-name vsrp-sandbox-env/frontend \
-              --image-id imageTag=${{ github.sha }} \
-              --query 'imageScanStatus.status' \
+              --image-ids imageTag=${{ github.sha }} \
+              --query 'imageDetails[0].imageScanStatus.status' \
               --output text 2>/dev/null || echo "PENDING")
-            if [ "$STATUS" = "COMPLETE" ]; then
+            echo "Scan status: $STATUS (attempt $i/24)"
+            if [ "$STATUS" = "ACTIVE" ] || [ "$STATUS" = "COMPLETE" ]; then
               echo "Scan complete."
               break
             fi
-            echo "Scan status: $STATUS (attempt $i/30)"
-            sleep 10
+            sleep 15
           done
 
-      - name: Check scan for CRITICAL/HIGH CVEs
+      - name: Check Inspector findings for CRITICAL/HIGH CVEs
         run: |
-          CRITICAL=$(aws ecr describe-image-scan-findings \
-            --repository-name vsrp-sandbox-env/frontend \
-            --image-id imageTag=${{ github.sha }} \
-            --query 'imageScanFindings.findingSeverityCounts.CRITICAL' \
-            --output text 2>/dev/null || echo "0")
-          HIGH=$(aws ecr describe-image-scan-findings \
-            --repository-name vsrp-sandbox-env/frontend \
-            --image-id imageTag=${{ github.sha }} \
-            --query 'imageScanFindings.findingSeverityCounts.HIGH' \
-            --output text 2>/dev/null || echo "0")
+          FILTER=$(jq -n \
+            --arg repo "vsrp-sandbox-env/frontend" \
+            --arg tag  "${{ github.sha }}" \
+            '{
+              ecrImageRepositoryName: [{comparison:"EQUALS",value:$repo}],
+              ecrImageTags:           [{comparison:"EQUALS",value:$tag}]
+            }')
 
-          [ "$CRITICAL" = "None" ] && CRITICAL=0
-          [ "$HIGH" = "None" ] && HIGH=0
+          FINDINGS=$(aws inspector2 list-findings \
+            --filter-criteria "$FILTER" \
+            --output json)
+
+          CRITICAL=$(echo "$FINDINGS" | jq '[.findings[] | select(.severity=="CRITICAL")] | length')
+          HIGH=$(echo "$FINDINGS"     | jq '[.findings[] | select(.severity=="HIGH")]     | length')
 
           echo "Scan results: CRITICAL=$CRITICAL, HIGH=$HIGH"
           if [ "$CRITICAL" -gt 0 ]; then
-            echo "::error::$CRITICAL CRITICAL vulnerabilities found"
+            echo "::error::$CRITICAL CRITICAL vulnerabilities found in frontend"
             exit 1
           fi
           if [ "$HIGH" -gt 0 ]; then
-            echo "::warning::$HIGH HIGH vulnerabilities found — review recommended"
+            echo "::warning::$HIGH HIGH vulnerabilities found in frontend — review recommended"
           fi
 
   # ---------------------------------------------------------------------------
@@ -229,44 +232,45 @@ jobs:
             exit 1
           fi
 
-      - name: Wait for ECR scan
+      - name: Wait for Inspector scan
         run: |
-          echo "Waiting for ECR scan to complete..."
-          for i in $(seq 1 30); do
-            STATUS=$(aws ecr describe-image-scan-findings \
+          echo "Waiting for Inspector enhanced scan..."
+          for i in $(seq 1 24); do
+            STATUS=$(aws ecr describe-images \
               --repository-name vsrp-sandbox-env/backend \
-              --image-id imageTag=${{ github.sha }} \
-              --query 'imageScanStatus.status' \
+              --image-ids imageTag=${{ github.sha }} \
+              --query 'imageDetails[0].imageScanStatus.status' \
               --output text 2>/dev/null || echo "PENDING")
-            if [ "$STATUS" = "COMPLETE" ]; then
+            echo "Scan status: $STATUS (attempt $i/24)"
+            if [ "$STATUS" = "ACTIVE" ] || [ "$STATUS" = "COMPLETE" ]; then
               echo "Scan complete."
               break
             fi
-            echo "Scan status: $STATUS (attempt $i/30)"
-            sleep 10
+            sleep 15
           done
 
-      - name: Check scan for CRITICAL/HIGH CVEs
+      - name: Check Inspector findings for CRITICAL/HIGH CVEs
         run: |
-          CRITICAL=$(aws ecr describe-image-scan-findings \
-            --repository-name vsrp-sandbox-env/backend \
-            --image-id imageTag=${{ github.sha }} \
-            --query 'imageScanFindings.findingSeverityCounts.CRITICAL' \
-            --output text 2>/dev/null || echo "0")
-          HIGH=$(aws ecr describe-image-scan-findings \
-            --repository-name vsrp-sandbox-env/backend \
-            --image-id imageTag=${{ github.sha }} \
-            --query 'imageScanFindings.findingSeverityCounts.HIGH' \
-            --output text 2>/dev/null || echo "0")
+          FILTER=$(jq -n \
+            --arg repo "vsrp-sandbox-env/backend" \
+            --arg tag  "${{ github.sha }}" \
+            '{
+              ecrImageRepositoryName: [{comparison:"EQUALS",value:$repo}],
+              ecrImageTags:           [{comparison:"EQUALS",value:$tag}]
+            }')
 
-          [ "$CRITICAL" = "None" ] && CRITICAL=0
-          [ "$HIGH" = "None" ] && HIGH=0
+          FINDINGS=$(aws inspector2 list-findings \
+            --filter-criteria "$FILTER" \
+            --output json)
+
+          CRITICAL=$(echo "$FINDINGS" | jq '[.findings[] | select(.severity=="CRITICAL")] | length')
+          HIGH=$(echo "$FINDINGS"     | jq '[.findings[] | select(.severity=="HIGH")]     | length')
 
           echo "Scan results: CRITICAL=$CRITICAL, HIGH=$HIGH"
           if [ "$CRITICAL" -gt 0 ]; then
-            echo "::error::$CRITICAL CRITICAL vulnerabilities found"
+            echo "::error::$CRITICAL CRITICAL vulnerabilities found in backend"
             exit 1
           fi
           if [ "$HIGH" -gt 0 ]; then
-            echo "::warning::$HIGH HIGH vulnerabilities found — review recommended"
+            echo "::warning::$HIGH HIGH vulnerabilities found in backend — review recommended"
           fi
