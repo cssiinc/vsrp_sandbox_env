@@ -1,0 +1,366 @@
+# vsrp-sandbox-env — Vulnerability Scan
+#
+# Builds a temporary image, waits for Inspector enhanced scan, and reports
+# findings as a PR comment. Blocks merge on CRITICAL CVEs.
+#
+# Triggers:
+#   pull_request  — scans changed components (frontend and/or backend)
+#   schedule      — weekly full rebuild to catch new CVEs in existing images
+#   workflow_dispatch — manual on-demand scan
+#
+# PR images are tagged pr-<number>-<sha> and expire automatically after 1 day
+# via ECR lifecycle policy. They are never deployed.
+
+name: Vulnerability Scan
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/**'
+  schedule:
+    - cron: '0 6 * * 1'   # Monday 06:00 UTC — weekly rebuild + scan
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write    # post findings as PR comments
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  REGISTRY:   ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION || 'us-east-1' }}.amazonaws.com
+  ECR_FRONTEND: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION || 'us-east-1' }}.amazonaws.com/vsrp-sandbox-env/frontend
+  ECR_BACKEND:  ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION || 'us-east-1' }}.amazonaws.com/vsrp-sandbox-env/backend
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Detect which tiers changed — on schedule/dispatch, scan both
+  # ---------------------------------------------------------------------------
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ github.event_name != 'pull_request' && 'true' || steps.filter.outputs.frontend }}
+      backend:  ${{ github.event_name != 'pull_request' && 'true' || steps.filter.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        if: github.event_name == 'pull_request'
+        id: filter
+        with:
+          filters: |
+            frontend:
+              - 'app/frontend/**'
+            backend:
+              - 'app/backend/**'
+
+  # ---------------------------------------------------------------------------
+  # Frontend scan
+  # ---------------------------------------------------------------------------
+  scan-frontend:
+    name: Scan Frontend
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "value=pr-${{ github.event.pull_request.number }}-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=scheduled-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push scan image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app/frontend
+          push: true
+          tags: ${{ env.ECR_FRONTEND }}:${{ steps.tag.outputs.value }}
+          build-args: REGISTRY=${{ env.REGISTRY }}
+          cache-from: type=gha,scope=frontend-scan
+          cache-to: type=gha,mode=max,scope=frontend-scan
+
+      - name: Wait for Inspector scan
+        run: |
+          echo "Waiting for Inspector enhanced scan to complete..."
+          for i in $(seq 1 24); do
+            STATUS=$(aws ecr describe-images \
+              --repository-name vsrp-sandbox-env/frontend \
+              --image-ids imageTag=${{ steps.tag.outputs.value }} \
+              --query 'imageDetails[0].imageScanStatus.status' \
+              --output text 2>/dev/null || echo "PENDING")
+            echo "  status: $STATUS (attempt $i/24)"
+            if [ "$STATUS" = "ACTIVE" ] || [ "$STATUS" = "COMPLETE" ]; then
+              echo "Scan complete."
+              break
+            fi
+            sleep 15
+          done
+
+      - name: Collect findings
+        id: findings
+        run: |
+          FILTER=$(jq -n \
+            --arg repo "vsrp-sandbox-env/frontend" \
+            --arg tag  "${{ steps.tag.outputs.value }}" \
+            '{
+              ecrImageRepositoryName: [{comparison:"EQUALS",value:$repo}],
+              ecrImageTags:           [{comparison:"EQUALS",value:$tag}]
+            }')
+
+          FINDINGS=$(aws inspector2 list-findings \
+            --filter-criteria "$FILTER" \
+            --query 'findings[].{
+              severity: severity,
+              cve:      packageVulnerabilityDetails.vulnerabilityId,
+              package:  packageVulnerabilityDetails.vulnerablePackages[0].name,
+              installed:packageVulnerabilityDetails.vulnerablePackages[0].version,
+              fixedIn:  packageVulnerabilityDetails.vulnerablePackages[0].fixedInVersion,
+              type:     packageVulnerabilityDetails.vulnerablePackages[0].packageManager
+            }' \
+            --output json)
+
+          CRITICAL=$(echo "$FINDINGS" | jq '[.[] | select(.severity=="CRITICAL")] | length')
+          HIGH=$(echo "$FINDINGS"     | jq '[.[] | select(.severity=="HIGH")]     | length')
+          MEDIUM=$(echo "$FINDINGS"   | jq '[.[] | select(.severity=="MEDIUM")]   | length')
+          LOW=$(echo "$FINDINGS"      | jq '[.[] | select(.severity=="LOW")]      | length')
+
+          echo "critical=$CRITICAL" >> "$GITHUB_OUTPUT"
+          echo "Findings — CRITICAL:$CRITICAL HIGH:$HIGH MEDIUM:$MEDIUM LOW:$LOW"
+
+          # Build report markdown
+          STATUS_ICON=$([ "$CRITICAL" -gt 0 ] && echo "🔴 BLOCKED" || echo "✅ PASSED")
+          {
+            echo "## Inspector Scan — frontend  ${STATUS_ICON}"
+            echo ""
+            echo "| Severity | Count |"
+            echo "|---|---|"
+            echo "| 🔴 CRITICAL | ${CRITICAL} |"
+            echo "| 🟠 HIGH     | ${HIGH}     |"
+            echo "| 🟡 MEDIUM   | ${MEDIUM}   |"
+            echo "| 🔵 LOW      | ${LOW}      |"
+          } > scan-report-frontend.md
+
+          if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
+            {
+              echo ""
+              echo "### CRITICAL / HIGH Details"
+              echo ""
+              echo "| Severity | Type | Package | Installed | Fixed In | CVE |"
+              echo "|---|---|---|---|---|---|"
+              echo "$FINDINGS" | jq -r '
+                .[] | select(.severity == "CRITICAL" or .severity == "HIGH") |
+                "| \(.severity) | \(.type // "OS") | \(.package) | \(.installed) | \(.fixedIn // "no fix") | \(.cve) |"
+              '
+            } >> scan-report-frontend.md
+          fi
+
+          {
+            echo ""
+            echo "> Scanned image: \`vsrp-sandbox-env/frontend:${{ steps.tag.outputs.value }}\`"
+          } >> scan-report-frontend.md
+
+      - name: Post PR comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs   = require('fs');
+            const body = fs.readFileSync('scan-report-frontend.md', 'utf8');
+            const marker = '<!-- vuln-scan-frontend -->';
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body.includes(marker));
+            const fullBody = `${marker}\n${body}`;
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                comment_id: existing.id, body: fullBody,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.issue.number, body: fullBody,
+              });
+            }
+
+      - name: Fail on CRITICAL
+        if: steps.findings.outputs.critical > 0
+        run: |
+          echo "::error::${{ steps.findings.outputs.critical }} CRITICAL vulnerabilities in frontend — merge blocked"
+          exit 1
+
+  # ---------------------------------------------------------------------------
+  # Backend scan
+  # ---------------------------------------------------------------------------
+  scan-backend:
+    name: Scan Backend
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "value=pr-${{ github.event.pull_request.number }}-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=scheduled-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push scan image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app/backend
+          push: true
+          tags: ${{ env.ECR_BACKEND }}:${{ steps.tag.outputs.value }}
+          build-args: REGISTRY=${{ env.REGISTRY }}
+          cache-from: type=gha,scope=backend-scan
+          cache-to: type=gha,mode=max,scope=backend-scan
+
+      - name: Wait for Inspector scan
+        run: |
+          echo "Waiting for Inspector enhanced scan to complete..."
+          for i in $(seq 1 24); do
+            STATUS=$(aws ecr describe-images \
+              --repository-name vsrp-sandbox-env/backend \
+              --image-ids imageTag=${{ steps.tag.outputs.value }} \
+              --query 'imageDetails[0].imageScanStatus.status' \
+              --output text 2>/dev/null || echo "PENDING")
+            echo "  status: $STATUS (attempt $i/24)"
+            if [ "$STATUS" = "ACTIVE" ] || [ "$STATUS" = "COMPLETE" ]; then
+              echo "Scan complete."
+              break
+            fi
+            sleep 15
+          done
+
+      - name: Collect findings
+        id: findings
+        run: |
+          FILTER=$(jq -n \
+            --arg repo "vsrp-sandbox-env/backend" \
+            --arg tag  "${{ steps.tag.outputs.value }}" \
+            '{
+              ecrImageRepositoryName: [{comparison:"EQUALS",value:$repo}],
+              ecrImageTags:           [{comparison:"EQUALS",value:$tag}]
+            }')
+
+          FINDINGS=$(aws inspector2 list-findings \
+            --filter-criteria "$FILTER" \
+            --query 'findings[].{
+              severity: severity,
+              cve:      packageVulnerabilityDetails.vulnerabilityId,
+              package:  packageVulnerabilityDetails.vulnerablePackages[0].name,
+              installed:packageVulnerabilityDetails.vulnerablePackages[0].version,
+              fixedIn:  packageVulnerabilityDetails.vulnerablePackages[0].fixedInVersion,
+              type:     packageVulnerabilityDetails.vulnerablePackages[0].packageManager
+            }' \
+            --output json)
+
+          CRITICAL=$(echo "$FINDINGS" | jq '[.[] | select(.severity=="CRITICAL")] | length')
+          HIGH=$(echo "$FINDINGS"     | jq '[.[] | select(.severity=="HIGH")]     | length')
+          MEDIUM=$(echo "$FINDINGS"   | jq '[.[] | select(.severity=="MEDIUM")]   | length')
+          LOW=$(echo "$FINDINGS"      | jq '[.[] | select(.severity=="LOW")]      | length')
+
+          echo "critical=$CRITICAL" >> "$GITHUB_OUTPUT"
+          echo "Findings — CRITICAL:$CRITICAL HIGH:$HIGH MEDIUM:$MEDIUM LOW:$LOW"
+
+          STATUS_ICON=$([ "$CRITICAL" -gt 0 ] && echo "🔴 BLOCKED" || echo "✅ PASSED")
+          {
+            echo "## Inspector Scan — backend  ${STATUS_ICON}"
+            echo ""
+            echo "| Severity | Count |"
+            echo "|---|---|"
+            echo "| 🔴 CRITICAL | ${CRITICAL} |"
+            echo "| 🟠 HIGH     | ${HIGH}     |"
+            echo "| 🟡 MEDIUM   | ${MEDIUM}   |"
+            echo "| 🔵 LOW      | ${LOW}      |"
+          } > scan-report-backend.md
+
+          if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
+            {
+              echo ""
+              echo "### CRITICAL / HIGH Details"
+              echo ""
+              echo "| Severity | Type | Package | Installed | Fixed In | CVE |"
+              echo "|---|---|---|---|---|---|"
+              echo "$FINDINGS" | jq -r '
+                .[] | select(.severity == "CRITICAL" or .severity == "HIGH") |
+                "| \(.severity) | \(.type // "OS") | \(.package) | \(.installed) | \(.fixedIn // "no fix") | \(.cve) |"
+              '
+            } >> scan-report-backend.md
+          fi
+
+          {
+            echo ""
+            echo "> Scanned image: \`vsrp-sandbox-env/backend:${{ steps.tag.outputs.value }}\`"
+          } >> scan-report-backend.md
+
+      - name: Post PR comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs   = require('fs');
+            const body = fs.readFileSync('scan-report-backend.md', 'utf8');
+            const marker = '<!-- vuln-scan-backend -->';
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body.includes(marker));
+            const fullBody = `${marker}\n${body}`;
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                comment_id: existing.id, body: fullBody,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.issue.number, body: fullBody,
+              });
+            }
+
+      - name: Fail on CRITICAL
+        if: steps.findings.outputs.critical > 0
+        run: |
+          echo "::error::${{ steps.findings.outputs.critical }} CRITICAL vulnerabilities in backend — merge blocked"
+          exit 1
