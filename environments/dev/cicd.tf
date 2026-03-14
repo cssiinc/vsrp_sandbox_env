@@ -174,13 +174,14 @@ data "aws_iam_policy_document" "github_actions" {
     ]
   }
 
-  # Inspector: query scan findings in vuln-scan.yml pipeline
-  # inspector2:ListFindings does not support resource-level restrictions
+  # Inspector: query scan findings and coverage in vuln-scan.yml pipeline
+  # inspector2:List* actions do not support resource-level restrictions
   statement {
     sid    = "InspectorFindings"
     effect = "Allow"
     actions = [
-      "inspector2:ListFindings"
+      "inspector2:ListFindings",
+      "inspector2:ListCoverage"
     ]
     resources = ["*"]
   }
