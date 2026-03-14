@@ -1,5 +1,8 @@
 # vsrp-sandbox backend: Node + Express, proxies public APIs
-FROM node:20-alpine
+# REGISTRY is passed by CI as the ECR pull-through cache base URL.
+# Example: 123456789.dkr.ecr.us-east-1.amazonaws.com
+ARG REGISTRY
+FROM ${REGISTRY}/docker-hub/node:20-alpine
 
 WORKDIR /app
 
