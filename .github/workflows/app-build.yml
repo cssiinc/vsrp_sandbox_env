@@ -120,17 +120,23 @@ jobs:
 
       - name: Wait for Inspector scan
         run: |
-          # With Inspector enhanced scanning, status is ACTIVE (not COMPLETE).
-          # ecr describe-image-scan-findings is basic-scan only — use describe-images instead.
           echo "Waiting for Inspector enhanced scan..."
+          IMAGE_ARN="arn:aws:ecr:${AWS_REGION}:${REGISTRY%%.*}:repository/vsrp-sandbox-env/frontend"
+          IMAGE_HASH=$(aws ecr describe-images \
+            --repository-name vsrp-sandbox-env/frontend \
+            --image-ids imageTag=${{ github.sha }} \
+            --query 'imageDetails[0].imageDigest' --output text)
+
+          FILTER=$(jq -n --arg arn "$IMAGE_ARN/$IMAGE_HASH" \
+            '[{comparison:"EQUALS",value:$arn}]')
+
           for i in $(seq 1 24); do
-            STATUS=$(aws ecr describe-images \
-              --repository-name vsrp-sandbox-env/frontend \
-              --image-ids imageTag=${{ github.sha }} \
-              --query 'imageDetails[0].imageScanStatus.status' \
+            STATUS=$(aws inspector2 list-coverage \
+              --filter-criteria "{\"resourceId\": $FILTER}" \
+              --query 'coveredResources[0].scanStatus.statusCode' \
               --output text 2>/dev/null || echo "PENDING")
             echo "Scan status: $STATUS (attempt $i/24)"
-            if [ "$STATUS" = "ACTIVE" ] || [ "$STATUS" = "COMPLETE" ]; then
+            if [ "$STATUS" = "ACTIVE" ]; then
               echo "Scan complete."
               break
             fi
@@ -235,14 +241,22 @@ jobs:
       - name: Wait for Inspector scan
         run: |
           echo "Waiting for Inspector enhanced scan..."
+          IMAGE_ARN="arn:aws:ecr:${AWS_REGION}:${REGISTRY%%.*}:repository/vsrp-sandbox-env/backend"
+          IMAGE_HASH=$(aws ecr describe-images \
+            --repository-name vsrp-sandbox-env/backend \
+            --image-ids imageTag=${{ github.sha }} \
+            --query 'imageDetails[0].imageDigest' --output text)
+
+          FILTER=$(jq -n --arg arn "$IMAGE_ARN/$IMAGE_HASH" \
+            '[{comparison:"EQUALS",value:$arn}]')
+
           for i in $(seq 1 24); do
-            STATUS=$(aws ecr describe-images \
-              --repository-name vsrp-sandbox-env/backend \
-              --image-ids imageTag=${{ github.sha }} \
-              --query 'imageDetails[0].imageScanStatus.status' \
+            STATUS=$(aws inspector2 list-coverage \
+              --filter-criteria "{\"resourceId\": $FILTER}" \
+              --query 'coveredResources[0].scanStatus.statusCode' \
               --output text 2>/dev/null || echo "PENDING")
             echo "Scan status: $STATUS (attempt $i/24)"
-            if [ "$STATUS" = "ACTIVE" ] || [ "$STATUS" = "COMPLETE" ]; then
+            if [ "$STATUS" = "ACTIVE" ]; then
               echo "Scan complete."
               break
             fi
