@@ -89,6 +89,7 @@ data "aws_iam_policy_document" "github_actions" {
       "ecr:BatchCheckLayerAvailability",
       "ecr:GetDownloadUrlForLayer",
       "ecr:BatchGetImage",
+      "ecr:DescribeImages",
       "ecr:PutImage",
       "ecr:InitiateLayerUpload",
       "ecr:UploadLayerPart",
@@ -163,6 +164,7 @@ data "aws_iam_policy_document" "github_actions" {
       "ecr:CreateRepository",
       "ecr:BatchImportUpstreamImage",
       "ecr:BatchGetImage",
+      "ecr:DescribeImages",
       "ecr:GetDownloadUrlForLayer",
       "ecr:BatchCheckLayerAvailability"
     ]
