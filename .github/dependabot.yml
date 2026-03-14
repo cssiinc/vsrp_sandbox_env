@@ -1,0 +1,48 @@
+version: 2
+updates:
+  # Docker base images — backend
+  - package-ecosystem: docker
+    directory: /app/backend
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore"
+
+  # Docker base images — frontend
+  - package-ecosystem: docker
+    directory: /app/frontend
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore"
+
+  # npm dependencies — backend
+  - package-ecosystem: npm
+    directory: /app/backend
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore"
+    # Group all npm patch/minor updates into a single PR to reduce noise
+    groups:
+      npm-patch-minor:
+        update-types:
+          - minor
+          - patch
+
+  # npm dependencies — frontend
+  - package-ecosystem: npm
+    directory: /app/frontend
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore"
+    groups:
+      npm-patch-minor:
+        update-types:
+          - minor
+          - patch
