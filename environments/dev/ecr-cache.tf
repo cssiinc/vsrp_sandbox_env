@@ -52,12 +52,18 @@ resource "aws_secretsmanager_secret_version" "docker_hub" {
   })
 }
 
+# ECR has a propagation delay before it can resolve a newly created secret ARN.
+resource "time_sleep" "wait_for_docker_hub_secret" {
+  depends_on      = [aws_secretsmanager_secret_version.docker_hub]
+  create_duration = "15s"
+}
+
 resource "aws_ecr_pull_through_cache_rule" "docker_hub" {
   ecr_repository_prefix = "docker-hub"
   upstream_registry_url = "registry-1.docker.io"
   credential_arn        = aws_secretsmanager_secret.docker_hub.arn
 
-  depends_on = [aws_secretsmanager_secret_version.docker_hub]
+  depends_on = [time_sleep.wait_for_docker_hub_secret]
 }
 
 # ---------------------------------------------------------------------------
