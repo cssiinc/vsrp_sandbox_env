@@ -28,13 +28,11 @@ resource "aws_ecr_pull_through_cache_rule" "ecr_public" {
 # ---------------------------------------------------------------------------
 # Docker Hub — credentials stored in Secrets Manager
 #
-# After apply, populate the secret with your Docker Hub PAT:
-#   aws secretsmanager put-secret-value \
-#     --secret-id <secret_arn_from_output> \
-#     --secret-string '{"username":"<dockerhub_user>","accessToken":"<pat>"}'
+# Set docker_hub_username and docker_hub_access_token as sensitive
+# Terraform variables in the TFC workspace before applying.
 #
 # Get a PAT at: https://hub.docker.com/settings/security
-# Required scopes: Public Repo Read (read:org is not needed)
+# Required scope: Public Repo Read
 # ---------------------------------------------------------------------------
 resource "aws_secretsmanager_secret" "docker_hub" {
   name                    = "ecr-pullthroughcache/${var.project}-docker-hub-credentials"
@@ -46,12 +44,20 @@ resource "aws_secretsmanager_secret" "docker_hub" {
   }
 }
 
+resource "aws_secretsmanager_secret_version" "docker_hub" {
+  secret_id = aws_secretsmanager_secret.docker_hub.id
+  secret_string = jsonencode({
+    username    = var.docker_hub_username
+    accessToken = var.docker_hub_access_token
+  })
+}
+
 resource "aws_ecr_pull_through_cache_rule" "docker_hub" {
   ecr_repository_prefix = "docker-hub"
   upstream_registry_url = "registry-1.docker.io"
   credential_arn        = aws_secretsmanager_secret.docker_hub.arn
 
-  depends_on = [aws_secretsmanager_secret.docker_hub]
+  depends_on = [aws_secretsmanager_secret_version.docker_hub]
 }
 
 # ---------------------------------------------------------------------------
