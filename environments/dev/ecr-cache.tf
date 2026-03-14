@@ -15,7 +15,7 @@
 #   Populate Docker Hub credentials in Secrets Manager (see comment below).
 ################################################################################
 
-data "aws_caller_identity" "current" {}
+# Note: data.aws_caller_identity.current is declared in alb.tf
 
 # ---------------------------------------------------------------------------
 # ECR Public — no credentials required
