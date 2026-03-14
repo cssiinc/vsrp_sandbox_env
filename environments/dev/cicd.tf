@@ -154,14 +154,17 @@ data "aws_iam_policy_document" "github_actions" {
     ]
   }
 
-  # Pull-through cache: auto-create cached repos and fetch upstream images
+  # Pull-through cache: fetch upstream images and pull cached base images during Docker builds
   # Required for Dockerfiles that use the ECR pull-through cache URL as base image
   statement {
     sid    = "ECRPullThroughCache"
     effect = "Allow"
     actions = [
       "ecr:CreateRepository",
-      "ecr:BatchImportUpstreamImage"
+      "ecr:BatchImportUpstreamImage",
+      "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
+      "ecr:BatchCheckLayerAvailability"
     ]
     resources = [
       "arn:aws:ecr:${var.aws_region}:${data.aws_caller_identity.current.account_id}:repository/docker-hub/*",
